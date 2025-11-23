@@ -1,0 +1,87 @@
+import com.vanniktech.maven.publish.SonatypeHost
+
+plugins {
+	id 'java-library'
+	id 'org.springframework.boot' version '3.5.7'
+	id 'io.spring.dependency-management' version '1.1.7'
+	id "com.vanniktech.maven.publish" version "0.32.0"
+	id 'signing'
+}
+
+group = 'com.soyesenna'
+version = '0.0.1'
+description = 'HelixQuery runtime + processor'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+configurations {
+	compileOnly {
+		extendsFrom annotationProcessor
+	}
+}
+
+
+repositories {
+	mavenCentral()
+}
+
+tasks.withType(Javadoc) {
+	options {
+		encoding 'UTF-8'
+	}
+}
+
+mavenPublishing {
+	signAllPublications()
+	publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+
+	coordinates("com.soyesenna", "helix-query", "0.1.1")
+
+	pom {
+		name = 'helix-query'
+		description = 'HelixQuery runtime + processor'
+		url = 'https://github.com/soyesenna/helix-query.git'
+
+		licenses {
+			license {
+				name = 'Apache License'
+				url = 'https://github.com/soyesenna/helix-query/blob/main/LICENSE'
+			}
+		}
+
+		developers {
+			developer {
+				id = 'soyesenna'
+				name = 'Jooyoung Kim'
+				email = 'kjy915875@gmail.com'
+			}
+		}
+
+		scm {
+			connection = 'scm:git:github.com/soyesenna/helix-query.git'
+			developerConnection = 'scm:git:ssh://github.com:soyesenna/helix-query.git'
+			url = 'https://github.com/soyesenna/helix-query/tree/main'
+		}
+	}
+}
+
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'com.querydsl:querydsl-jpa:5.1.0:jakarta'
+
+	annotationProcessor 'com.querydsl:querydsl-apt:5.1.0:jakarta'
+	annotationProcessor 'jakarta.persistence:jakarta.persistence-api:3.1.0'
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
