@@ -76,8 +76,8 @@ public class QueryChain<T, Q extends EntityPathBase<T>> {
         return this;
     }
 
-    // Field 기반 조건
-    public <V> QueryChain<T, Q> eq(Field<V, Q> field, V value) {
+    // Field 기반 where 조건
+    public <V> QueryChain<T, Q> whereEqual(Field<V, Q> field, V value) {
         if (value != null) {
             predicates.and(field.path(root).eq(value));
             attachPredicateIfNeeded();
@@ -85,7 +85,7 @@ public class QueryChain<T, Q extends EntityPathBase<T>> {
         return this;
     }
 
-    public <V extends Comparable<?>> QueryChain<T, Q> gt(Field<V, Q> field, V value) {
+    public <V extends Comparable<?>> QueryChain<T, Q> whereGreaterThan(Field<V, Q> field, V value) {
         if (value != null) {
             Predicate predicate = buildGreaterThan(field, value);
             if (predicate != null) {
@@ -96,7 +96,7 @@ public class QueryChain<T, Q extends EntityPathBase<T>> {
         return this;
     }
 
-    public <V extends Comparable<?>> QueryChain<T, Q> lt(Field<V, Q> field, V value) {
+    public <V extends Comparable<?>> QueryChain<T, Q> whereLessThan(Field<V, Q> field, V value) {
         if (value != null) {
             Predicate predicate = buildLessThan(field, value);
             if (predicate != null) {
@@ -107,7 +107,7 @@ public class QueryChain<T, Q extends EntityPathBase<T>> {
         return this;
     }
 
-    public QueryChain<T, Q> like(Field<String, Q> field, String pattern) {
+    public QueryChain<T, Q> whereLike(Field<String, Q> field, String pattern) {
         if (pattern != null) {
             var expression = field.path(root);
             if (expression instanceof StringExpression stringExpression) {
@@ -118,7 +118,7 @@ public class QueryChain<T, Q extends EntityPathBase<T>> {
         return this;
     }
 
-    public <V> QueryChain<T, Q> in(Field<V, Q> field, List<? extends V> values) {
+    public <V> QueryChain<T, Q> whereIn(Field<V, Q> field, List<? extends V> values) {
         if (values != null && !values.isEmpty()) {
             predicates.and(field.path(root).in(values));
             attachPredicateIfNeeded();

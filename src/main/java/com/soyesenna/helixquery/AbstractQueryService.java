@@ -7,7 +7,7 @@ import com.querydsl.core.types.dsl.EntityPathBase;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 
 /**
- * Base service that wires Spring-managed EntityManager & Querydsl factory while exposing query helpers.
+ * Base service that wires Spring-managed EntityManager &amp; Querydsl factory while exposing query helpers.
  */
 public abstract class AbstractQueryService<T, Q extends EntityPathBase<T>> {
 
@@ -52,21 +52,21 @@ public abstract class AbstractQueryService<T, Q extends EntityPathBase<T>> {
     /**
      * Starts a QueryChain with selectFrom(q).
      */
-    protected QueryChain<T, Q> findAll() {
+    public QueryChain<T, Q> find() {
         return new QueryChain<>(q, queryFactory.selectFrom(q));
     }
 
     /**
      * Starts QueryChain with equality filter.
      */
-    protected <V> QueryChain<T, Q> findBy(Field<V, Q> field, V value) {
+    public <V> QueryChain<T, Q> findBy(Field<V, Q> field, V value) {
         return new QueryChain<>(q, queryFactory.selectFrom(q), field.path(q).eq(value));
     }
 
     /**
      * Starts QueryChain from custom predicate.
      */
-    protected QueryChain<T, Q> where(com.querydsl.core.types.dsl.BooleanExpression predicate) {
+    public QueryChain<T, Q> where(com.querydsl.core.types.dsl.BooleanExpression predicate) {
         return new QueryChain<>(q, queryFactory.selectFrom(q), predicate);
     }
 }
