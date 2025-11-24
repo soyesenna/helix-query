@@ -9,7 +9,7 @@ plugins {
 }
 
 group = 'com.soyesenna'
-version = '0.0.1'
+version = '0.0.2'
 description = 'HelixQuery runtime + processor'
 
 java {
@@ -40,7 +40,7 @@ mavenPublishing {
 	signAllPublications()
 	publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
 
-	coordinates("com.soyesenna", "helixquery", "0.0.1")
+	coordinates("com.soyesenna", "helixquery", "0.0.2")
 
 	pom {
 		name = 'helix-query'
