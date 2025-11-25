@@ -1,0 +1,766 @@
+package com.soyesenna.helixquery;
+
+import com.soyesenna.helixquery.expression.ConstructorExpression;
+import com.soyesenna.helixquery.expression.CriteriaContext;
+import com.soyesenna.helixquery.expression.CriteriaExpressionVisitor;
+import com.soyesenna.helixquery.expression.PathExpression;
+import com.soyesenna.helixquery.expression.PredicateExpression;
+import com.soyesenna.helixquery.field.*;
+import com.soyesenna.helixquery.order.OrderSpecifier;
+import com.soyesenna.helixquery.predicate.PredicateBuilder;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.NoResultException;
+import jakarta.persistence.Tuple;
+import jakarta.persistence.TypedQuery;
+import jakarta.persistence.criteria.*;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+/**
+ * Main fluent query builder replacing QueryChain.
+ * Provides type-safe query construction using the HelixQuery expression system
+ * and compiles to JPA Criteria API at execution time.
+ *
+ * @param <T> the entity type being queried
+ */
+public class HelixQuery<T> {
+
+    private final EntityManager entityManager;
+    private final Class<T> entityClass;
+    private final PathExpression<T> root;
+    private final PredicateBuilder predicateBuilder;
+    private final List<OrderSpecifier> orders;
+    private final List<JoinSpec> joins;
+    private final List<com.soyesenna.helixquery.expression.Expression<?>> groupByExpressions;
+    private PredicateExpression havingPredicate;
+    private Long offset;
+    private Long limit;
+    private boolean distinct;
+
+    /**
+     * Create a new query for the given entity class.
+     *
+     * @param entityManager the JPA entity manager
+     * @param entityClass   the entity class to query
+     */
+    public HelixQuery(EntityManager entityManager, Class<T> entityClass) {
+        this.entityManager = Objects.requireNonNull(entityManager, "entityManager must not be null");
+        this.entityClass = Objects.requireNonNull(entityClass, "entityClass must not be null");
+        this.root = new PathExpression<>(entityClass);
+        this.predicateBuilder = new PredicateBuilder();
+        this.orders = new ArrayList<>();
+        this.joins = new ArrayList<>();
+        this.groupByExpressions = new ArrayList<>();
+    }
+
+    // ==================== Root Access ====================
+
+    /**
+     * Get the root path expression for this query.
+     * Used to build expressions referencing entity fields.
+     *
+     * @return the root path expression
+     */
+    public PathExpression<T> root() {
+        return root;
+    }
+
+    // ==================== WHERE Clause ====================
+
+    /**
+     * Add a WHERE condition.
+     *
+     * @param predicate the predicate to add
+     * @return this query for chaining
+     */
+    public HelixQuery<T> where(PredicateExpression predicate) {
+        predicateBuilder.and(predicate);
+        return this;
+    }
+
+    /**
+     * Add a WHERE condition with AND.
+     *
+     * @param predicate the predicate to add
+     * @return this query for chaining
+     */
+    public HelixQuery<T> and(PredicateExpression predicate) {
+        predicateBuilder.and(predicate);
+        return this;
+    }
+
+    /**
+     * Add a WHERE condition with OR.
+     *
+     * @param predicate the predicate to add
+     * @return this query for chaining
+     */
+    public HelixQuery<T> or(PredicateExpression predicate) {
+        predicateBuilder.or(predicate);
+        return this;
+    }
+
+    // ==================== Field-Based WHERE Conditions ====================
+
+    /**
+     * Add equality condition: field = value
+     */
+    public <V> HelixQuery<T> whereEqual(Field<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.eq(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add equality condition for comparable fields.
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> whereEqual(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.eq(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add equality condition for string fields.
+     */
+    public HelixQuery<T> whereEqual(StringField field, String value) {
+        if (value != null) {
+            predicateBuilder.and(field.eq(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add equality condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> whereEqual(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.eq(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add greater-than condition: field > value
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> whereGreaterThan(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.gt(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add greater-than condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> whereGreaterThan(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.gt(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add less-than condition: field < value
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> whereLessThan(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.lt(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add less-than condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> whereLessThan(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.lt(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add LIKE condition: field LIKE pattern
+     */
+    public HelixQuery<T> whereLike(StringField field, String pattern) {
+        if (pattern != null) {
+            predicateBuilder.and(field.like(root, pattern));
+        }
+        return this;
+    }
+
+    /**
+     * Add contains condition: field LIKE '%value%'
+     */
+    public HelixQuery<T> whereContains(StringField field, String value) {
+        if (value != null && !value.isEmpty()) {
+            predicateBuilder.and(field.contains(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add IN condition: field IN (values)
+     */
+    public <V> HelixQuery<T> whereIn(Field<V> field, Collection<? extends V> values) {
+        if (values != null && !values.isEmpty()) {
+            predicateBuilder.and(field.in(root, values));
+        }
+        return this;
+    }
+
+    /**
+     * Add before-now condition for DateTime fields: field < now()
+     */
+    public HelixQuery<T> whereBeforeNow(DateTimeField<LocalDateTime> field) {
+        predicateBuilder.and(field.beforeNow(root));
+        return this;
+    }
+
+    /**
+     * Add after-now condition for DateTime fields: field > now()
+     */
+    public HelixQuery<T> whereAfterNow(DateTimeField<LocalDateTime> field) {
+        predicateBuilder.and(field.afterNow(root));
+        return this;
+    }
+
+    // ==================== ORDER BY ====================
+
+    /**
+     * Add ordering specification.
+     *
+     * @param specifiers the order specifiers
+     * @return this query for chaining
+     */
+    public HelixQuery<T> orderBy(OrderSpecifier... specifiers) {
+        orders.addAll(Arrays.asList(specifiers));
+        return this;
+    }
+
+    /**
+     * Add ascending order by field.
+     */
+    public <V> HelixQuery<T> orderByAsc(Field<V> field) {
+        orders.add(field.asc(root));
+        return this;
+    }
+
+    /**
+     * Add descending order by field.
+     */
+    public <V> HelixQuery<T> orderByDesc(Field<V> field) {
+        orders.add(field.desc(root));
+        return this;
+    }
+
+    /**
+     * Add ascending order by string field.
+     */
+    public HelixQuery<T> orderByAsc(StringField field) {
+        orders.add(field.asc(root));
+        return this;
+    }
+
+    /**
+     * Add descending order by string field.
+     */
+    public HelixQuery<T> orderByDesc(StringField field) {
+        orders.add(field.desc(root));
+        return this;
+    }
+
+    /**
+     * Add ascending order by number field.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> orderByAsc(NumberField<V> field) {
+        orders.add(field.asc(root));
+        return this;
+    }
+
+    /**
+     * Add descending order by number field.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> orderByDesc(NumberField<V> field) {
+        orders.add(field.desc(root));
+        return this;
+    }
+
+    /**
+     * Add ascending order by datetime field.
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> orderByAsc(DateTimeField<V> field) {
+        orders.add(field.asc(root));
+        return this;
+    }
+
+    /**
+     * Add descending order by datetime field.
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> orderByDesc(DateTimeField<V> field) {
+        orders.add(field.desc(root));
+        return this;
+    }
+
+    // ==================== PAGINATION ====================
+
+    /**
+     * Set the maximum number of results.
+     *
+     * @param limit the limit
+     * @return this query for chaining
+     */
+    public HelixQuery<T> limit(long limit) {
+        this.limit = limit;
+        return this;
+    }
+
+    /**
+     * Set the offset (number of results to skip).
+     *
+     * @param offset the offset
+     * @return this query for chaining
+     */
+    public HelixQuery<T> offset(long offset) {
+        this.offset = offset;
+        return this;
+    }
+
+    /**
+     * Apply Spring Pageable for pagination and sorting.
+     *
+     * @param pageable          the pageable
+     * @param sortFieldResolver function to resolve sort property names to fields
+     * @return this query for chaining
+     */
+    public HelixQuery<T> pageable(Pageable pageable, Function<String, Field<?>> sortFieldResolver) {
+        if (pageable == null) {
+            return this;
+        }
+
+        this.offset = pageable.getOffset();
+        this.limit = (long) pageable.getPageSize();
+
+        for (Sort.Order order : pageable.getSort()) {
+            Field<?> field = sortFieldResolver.apply(order.getProperty());
+            if (field != null) {
+                if (order.isAscending()) {
+                    orders.add(field.asc(root));
+                } else {
+                    orders.add(field.desc(root));
+                }
+            }
+        }
+        return this;
+    }
+
+    // ==================== JOINS ====================
+
+    /**
+     * Add an inner join.
+     *
+     * @param relation the relation field to join
+     * @return this query for chaining
+     */
+    public <J> HelixQuery<T> join(RelationField<J> relation) {
+        joins.add(new JoinSpec(relation.name(), JoinType.INNER, false));
+        return this;
+    }
+
+    /**
+     * Add a left join.
+     *
+     * @param relation the relation field to join
+     * @return this query for chaining
+     */
+    public <J> HelixQuery<T> leftJoin(RelationField<J> relation) {
+        joins.add(new JoinSpec(relation.name(), JoinType.LEFT, false));
+        return this;
+    }
+
+    /**
+     * Add a fetch join (eager loading).
+     *
+     * @param relation the relation field to fetch join
+     * @return this query for chaining
+     */
+    public <J> HelixQuery<T> fetchJoin(RelationField<J> relation) {
+        joins.add(new JoinSpec(relation.name(), JoinType.INNER, true));
+        return this;
+    }
+
+    /**
+     * Add a left fetch join (eager loading).
+     *
+     * @param relation the relation field to fetch join
+     * @return this query for chaining
+     */
+    public <J> HelixQuery<T> leftFetchJoin(RelationField<J> relation) {
+        joins.add(new JoinSpec(relation.name(), JoinType.LEFT, true));
+        return this;
+    }
+
+    // ==================== GROUP BY / HAVING ====================
+
+    /**
+     * Add GROUP BY expressions.
+     *
+     * @param expressions the expressions to group by
+     * @return this query for chaining
+     */
+    public HelixQuery<T> groupBy(com.soyesenna.helixquery.expression.Expression<?>... expressions) {
+        groupByExpressions.addAll(Arrays.asList(expressions));
+        return this;
+    }
+
+    /**
+     * Add HAVING condition.
+     *
+     * @param predicate the having predicate
+     * @return this query for chaining
+     */
+    public HelixQuery<T> having(PredicateExpression predicate) {
+        this.havingPredicate = predicate;
+        return this;
+    }
+
+    // ==================== DISTINCT ====================
+
+    /**
+     * Set query to return distinct results.
+     *
+     * @return this query for chaining
+     */
+    public HelixQuery<T> distinct() {
+        this.distinct = true;
+        return this;
+    }
+
+    // ==================== CONDITIONAL APPLICATION ====================
+
+    /**
+     * Conditionally apply modifications to this query.
+     *
+     * @param condition  if true, apply the customizer
+     * @param customizer the function to apply
+     * @return this query for chaining
+     */
+    public HelixQuery<T> when(boolean condition, Consumer<HelixQuery<T>> customizer) {
+        if (condition) {
+            customizer.accept(this);
+        }
+        return this;
+    }
+
+    // ==================== EXECUTION - LIST ====================
+
+    /**
+     * Execute the query and return all results.
+     *
+     * @return the list of results
+     */
+    public List<T> query() {
+        return buildQuery().getResultList();
+    }
+
+    /**
+     * Execute the query and return all results (alias for query()).
+     *
+     * @return the list of results
+     */
+    public List<T> list() {
+        return query();
+    }
+
+    // ==================== EXECUTION - SINGLE ====================
+
+    /**
+     * Execute the query expecting exactly one result.
+     *
+     * @return Optional containing the result, or empty if no result
+     * @throws IllegalStateException if more than one result
+     */
+    public Optional<T> queryOne() {
+        TypedQuery<T> typedQuery = buildQuery();
+        typedQuery.setMaxResults(2);
+        List<T> results = typedQuery.getResultList();
+        if (results.size() > 1) {
+            throw new IllegalStateException("Expected at most one result but found " + results.size());
+        }
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
+    }
+
+    /**
+     * Execute the query expecting at most one result.
+     *
+     * @return the result or null if no result
+     * @throws IllegalStateException if more than one result
+     */
+    public T queryOneOrNull() {
+        return queryOne().orElse(null);
+    }
+
+    /**
+     * Execute the query and return the first result.
+     *
+     * @return the first result or null if no results
+     */
+    public T queryFirstOrNull() {
+        TypedQuery<T> typedQuery = buildQuery();
+        typedQuery.setMaxResults(1);
+        try {
+            return typedQuery.getSingleResult();
+        } catch (NoResultException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Execute the query and return the first result.
+     *
+     * @return Optional containing the first result
+     */
+    public Optional<T> queryFirst() {
+        return Optional.ofNullable(queryFirstOrNull());
+    }
+
+    // ==================== EXECUTION - COUNT ====================
+
+    /**
+     * Execute a count query.
+     *
+     * @return the count of matching results
+     */
+    public long queryCount() {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
+        Root<T> countRoot = countQuery.from(entityClass);
+
+        countQuery.select(distinct ? cb.countDistinct(countRoot) : cb.count(countRoot));
+
+        CriteriaContext ctx = new CriteriaContext(cb, countRoot, countQuery);
+        applyJoins(ctx, countRoot);
+
+        if (predicateBuilder.hasValue()) {
+            CriteriaExpressionVisitor visitor = new CriteriaExpressionVisitor();
+            Predicate predicate = visitor.compilePredicate(predicateBuilder.build(), ctx);
+            countQuery.where(predicate);
+        }
+
+        return entityManager.createQuery(countQuery).getSingleResult();
+    }
+
+    /**
+     * Check if any results exist.
+     *
+     * @return true if at least one result exists
+     */
+    public boolean exists() {
+        return queryFirstOrNull() != null;
+    }
+
+    // ==================== EXECUTION - PROJECTIONS ====================
+
+    /**
+     * Execute the query with a constructor projection.
+     *
+     * @param constructor the constructor expression
+     * @param <R>         the result type
+     * @return the list of projected results
+     */
+    @SuppressWarnings("unchecked")
+    public <R> List<R> queryAs(ConstructorExpression<R> constructor) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<R> cq = cb.createQuery((Class<R>) constructor.getType());
+        Root<T> criteriaRoot = cq.from(entityClass);
+
+        CriteriaContext ctx = new CriteriaContext(cb, criteriaRoot, cq);
+        CriteriaExpressionVisitor visitor = new CriteriaExpressionVisitor();
+
+        applyJoins(ctx, criteriaRoot);
+
+        // Build constructor selection
+        List<Selection<?>> selections = new ArrayList<>();
+        for (com.soyesenna.helixquery.expression.Expression<?> arg : constructor.getArguments()) {
+            selections.add(visitor.compile(arg, ctx));
+        }
+        cq.select(cb.construct(constructor.getType(), selections.toArray(new Selection[0])));
+
+        if (distinct) cq.distinct(true);
+        applyWhereClause(ctx, visitor, cq);
+        applyOrderBy(ctx, visitor, cq, cb);
+
+        TypedQuery<R> typedQuery = entityManager.createQuery(cq);
+        applyPagination(typedQuery);
+
+        return typedQuery.getResultList();
+    }
+
+    /**
+     * Execute the query with a single expression projection.
+     *
+     * @param selection the expression to select
+     * @param <R>       the result type
+     * @return the list of projected results
+     */
+    public <R> List<R> querySelect(com.soyesenna.helixquery.expression.Expression<R> selection) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        @SuppressWarnings("unchecked")
+        CriteriaQuery<R> cq = cb.createQuery((Class<R>) selection.getType());
+        Root<T> criteriaRoot = cq.from(entityClass);
+
+        CriteriaContext ctx = new CriteriaContext(cb, criteriaRoot, cq);
+        CriteriaExpressionVisitor visitor = new CriteriaExpressionVisitor();
+
+        applyJoins(ctx, criteriaRoot);
+
+        cq.select((jakarta.persistence.criteria.Selection<R>) visitor.compile(selection, ctx));
+
+        if (distinct) cq.distinct(true);
+        applyWhereClause(ctx, visitor, cq);
+        applyOrderBy(ctx, visitor, cq, cb);
+
+        TypedQuery<R> typedQuery = entityManager.createQuery(cq);
+        applyPagination(typedQuery);
+
+        return typedQuery.getResultList();
+    }
+
+    /**
+     * Execute the query with tuple projection.
+     *
+     * @param selections the expressions to select
+     * @return the list of tuple results
+     */
+    public List<Tuple> queryTuple(com.soyesenna.helixquery.expression.Expression<?>... selections) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Tuple> cq = cb.createTupleQuery();
+        Root<T> criteriaRoot = cq.from(entityClass);
+
+        CriteriaContext ctx = new CriteriaContext(cb, criteriaRoot, cq);
+        CriteriaExpressionVisitor visitor = new CriteriaExpressionVisitor();
+
+        applyJoins(ctx, criteriaRoot);
+
+        List<Selection<?>> selectionList = new ArrayList<>();
+        for (com.soyesenna.helixquery.expression.Expression<?> expr : selections) {
+            selectionList.add(visitor.compile(expr, ctx));
+        }
+        cq.multiselect(selectionList);
+
+        if (distinct) cq.distinct(true);
+        applyWhereClause(ctx, visitor, cq);
+        applyOrderBy(ctx, visitor, cq, cb);
+
+        TypedQuery<Tuple> typedQuery = entityManager.createQuery(cq);
+        applyPagination(typedQuery);
+
+        return typedQuery.getResultList();
+    }
+
+    // ==================== Internal Build Methods ====================
+
+    private TypedQuery<T> buildQuery() {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<T> cq = cb.createQuery(entityClass);
+        Root<T> criteriaRoot = cq.from(entityClass);
+
+        CriteriaContext ctx = new CriteriaContext(cb, criteriaRoot, cq);
+        CriteriaExpressionVisitor visitor = new CriteriaExpressionVisitor();
+
+        // Apply joins
+        applyJoins(ctx, criteriaRoot);
+
+        cq.select(criteriaRoot);
+        if (distinct) cq.distinct(true);
+
+        // Apply WHERE
+        applyWhereClause(ctx, visitor, cq);
+
+        // Apply GROUP BY
+        if (!groupByExpressions.isEmpty()) {
+            List<jakarta.persistence.criteria.Expression<?>> groupByList = new ArrayList<>();
+            for (com.soyesenna.helixquery.expression.Expression<?> expr : groupByExpressions) {
+                groupByList.add(visitor.compile(expr, ctx));
+            }
+            cq.groupBy(groupByList);
+        }
+
+        // Apply HAVING
+        if (havingPredicate != null) {
+            cq.having(visitor.compilePredicate(havingPredicate, ctx));
+        }
+
+        // Apply ORDER BY
+        applyOrderBy(ctx, visitor, cq, cb);
+
+        TypedQuery<T> typedQuery = entityManager.createQuery(cq);
+        applyPagination(typedQuery);
+
+        return typedQuery;
+    }
+
+    private void applyJoins(CriteriaContext ctx, Root<T> criteriaRoot) {
+        for (JoinSpec joinSpec : joins) {
+            if (joinSpec.fetch()) {
+                ctx.getOrCreateFetch(joinSpec.attribute(), joinSpec.type());
+            } else {
+                ctx.getOrCreateJoin(joinSpec.attribute(), joinSpec.type());
+            }
+        }
+    }
+
+    private void applyWhereClause(CriteriaContext ctx, CriteriaExpressionVisitor visitor, CriteriaQuery<?> cq) {
+        if (predicateBuilder.hasValue()) {
+            Predicate predicate = visitor.compilePredicate(predicateBuilder.build(), ctx);
+            cq.where(predicate);
+        }
+    }
+
+    private void applyOrderBy(CriteriaContext ctx, CriteriaExpressionVisitor visitor, CriteriaQuery<?> cq, CriteriaBuilder cb) {
+        if (!orders.isEmpty()) {
+            List<Order> orderList = new ArrayList<>();
+            for (OrderSpecifier spec : orders) {
+                jakarta.persistence.criteria.Expression<?> orderExpr = visitor.compile(spec.target(), ctx);
+                Order order;
+                if (spec.isAscending()) {
+                    order = switch (spec.nullHandling()) {
+                        case NULLS_FIRST -> cb.asc(orderExpr);  // Note: JPA doesn't have standard nulls first
+                        case NULLS_LAST -> cb.asc(orderExpr);
+                        default -> cb.asc(orderExpr);
+                    };
+                } else {
+                    order = switch (spec.nullHandling()) {
+                        case NULLS_FIRST -> cb.desc(orderExpr);
+                        case NULLS_LAST -> cb.desc(orderExpr);
+                        default -> cb.desc(orderExpr);
+                    };
+                }
+                orderList.add(order);
+            }
+            cq.orderBy(orderList);
+        }
+    }
+
+    private void applyPagination(TypedQuery<?> typedQuery) {
+        if (offset != null) {
+            typedQuery.setFirstResult(offset.intValue());
+        }
+        if (limit != null) {
+            typedQuery.setMaxResults(limit.intValue());
+        }
+    }
+
+    // ==================== Internal Helper Record ====================
+
+    private record JoinSpec(String attribute, JoinType type, boolean fetch) {
+    }
+}
