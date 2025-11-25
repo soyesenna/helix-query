@@ -14,7 +14,7 @@ public record ComparableField<T extends Comparable<? super T>>(
         String name,
         Class<T> type,
         Class<?> entityType
-) {
+) implements HelixField<T> {
 
     public ComparableField {
         Objects.requireNonNull(name, "name must not be null");

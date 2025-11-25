@@ -1,7 +1,11 @@
 package com.soyesenna.helixquery;
 
 import com.soyesenna.helixquery.expression.PredicateExpression;
+import com.soyesenna.helixquery.field.ComparableField;
 import com.soyesenna.helixquery.field.Field;
+import com.soyesenna.helixquery.field.HelixField;
+import com.soyesenna.helixquery.field.NumberField;
+import com.soyesenna.helixquery.field.StringField;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
@@ -38,7 +42,7 @@ public abstract class AbstractHelixService<T> {
      *
      * @param entity the entity to persist
      */
-    protected void persist(T entity) {
+    public void persist(T entity) {
         em.persist(entity);
     }
 
@@ -48,7 +52,7 @@ public abstract class AbstractHelixService<T> {
      * @param entity the entity to merge
      * @return the merged entity
      */
-    protected T merge(T entity) {
+    public T merge(T entity) {
         return em.merge(entity);
     }
 
@@ -57,14 +61,14 @@ public abstract class AbstractHelixService<T> {
      *
      * @param entity the entity to remove
      */
-    protected void remove(T entity) {
+    public void remove(T entity) {
         em.remove(entity);
     }
 
     /**
      * Flush pending changes to the database.
      */
-    protected void flush() {
+    public void flush() {
         em.flush();
     }
 
@@ -74,7 +78,7 @@ public abstract class AbstractHelixService<T> {
      * @param id the entity ID
      * @return the entity or null if not found
      */
-    protected T findById(Object id) {
+    public T findById(Object id) {
         return em.find(entityClass, id);
     }
 
@@ -83,7 +87,7 @@ public abstract class AbstractHelixService<T> {
      *
      * @param entity the entity to refresh
      */
-    protected void refresh(T entity) {
+    public void refresh(T entity) {
         em.refresh(entity);
     }
 
@@ -92,7 +96,7 @@ public abstract class AbstractHelixService<T> {
      *
      * @param entity the entity to detach
      */
-    protected void detach(T entity) {
+    public void detach(T entity) {
         em.detach(entity);
     }
 
@@ -103,19 +107,29 @@ public abstract class AbstractHelixService<T> {
      *
      * @return a new HelixQuery instance
      */
-    protected HelixQuery<T> find() {
+    public HelixQuery<T> find() {
         return queryFactory.query(entityClass);
     }
 
     /**
-     * Start a query with an equality filter.
+     * Start a query with an equality filter using the unified HelixField interface.
+     * This method works with all field types: Field, StringField, NumberField,
+     * ComparableField, DateTimeField, RelationField.
      *
-     * @param field the field to filter on
+     * <pre>{@code
+     * // Example usage with different field types:
+     * findBy(UserFields.EMAIL, "test@example.com")     // StringField
+     * findBy(UserFields.AGE, 25)                       // NumberField
+     * findBy(UserFields.STATUS, UserStatus.ACTIVE)    // ComparableField (enum)
+     * findBy(UserFields.ID, 1L)                        // NumberField
+     * }</pre>
+     *
+     * @param field the field to filter on (any HelixField type)
      * @param value the value to match
      * @param <V>   the field value type
      * @return a new HelixQuery instance with the filter applied
      */
-    protected <V> HelixQuery<T> findBy(Field<V> field, V value) {
+    public <V> HelixQuery<T> findBy(HelixField<V> field, V value) {
         return find().whereEqual(field, value);
     }
 
@@ -125,7 +139,7 @@ public abstract class AbstractHelixService<T> {
      * @param predicate the predicate to apply
      * @return a new HelixQuery instance with the predicate applied
      */
-    protected HelixQuery<T> where(PredicateExpression predicate) {
+    public HelixQuery<T> where(PredicateExpression predicate) {
         return find().where(predicate);
     }
 

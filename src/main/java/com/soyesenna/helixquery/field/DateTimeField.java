@@ -20,7 +20,7 @@ public record DateTimeField<T extends Temporal & Comparable<? super T>>(
         String name,
         Class<T> type,
         Class<?> entityType
-) {
+) implements HelixField<T> {
 
     public DateTimeField {
         Objects.requireNonNull(name, "name must not be null");

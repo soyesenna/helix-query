@@ -19,7 +19,7 @@ public record Field<T>(
         String name,
         Class<T> type,
         Class<?> entityType
-) {
+) implements HelixField<T> {
 
     public Field {
         Objects.requireNonNull(name, "name must not be null");

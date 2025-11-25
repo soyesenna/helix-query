@@ -108,8 +108,27 @@ public class HelixQuery<T> {
     // ==================== Field-Based WHERE Conditions ====================
 
     /**
-     * Add equality condition: field = value
+     * Add equality condition using unified HelixField interface.
+     * This method works with all field types: Field, StringField, NumberField,
+     * ComparableField, DateTimeField, RelationField.
+     *
+     * @param field the field to compare
+     * @param value the value to match
+     * @param <V>   the field value type
+     * @return this query for chaining
      */
+    public <V> HelixQuery<T> whereEqual(HelixField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.eq(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add equality condition: field = value
+     * @deprecated Use {@link #whereEqual(HelixField, Object)} instead
+     */
+    @Deprecated
     public <V> HelixQuery<T> whereEqual(Field<V> field, V value) {
         if (value != null) {
             predicateBuilder.and(field.eq(root, value));
@@ -119,7 +138,9 @@ public class HelixQuery<T> {
 
     /**
      * Add equality condition for comparable fields.
+     * @deprecated Use {@link #whereEqual(HelixField, Object)} instead
      */
+    @Deprecated
     public <V extends Comparable<? super V>> HelixQuery<T> whereEqual(ComparableField<V> field, V value) {
         if (value != null) {
             predicateBuilder.and(field.eq(root, value));
@@ -129,7 +150,9 @@ public class HelixQuery<T> {
 
     /**
      * Add equality condition for string fields.
+     * @deprecated Use {@link #whereEqual(HelixField, Object)} instead
      */
+    @Deprecated
     public HelixQuery<T> whereEqual(StringField field, String value) {
         if (value != null) {
             predicateBuilder.and(field.eq(root, value));
@@ -139,7 +162,9 @@ public class HelixQuery<T> {
 
     /**
      * Add equality condition for number fields.
+     * @deprecated Use {@link #whereEqual(HelixField, Object)} instead
      */
+    @Deprecated
     public <V extends Number & Comparable<V>> HelixQuery<T> whereEqual(NumberField<V> field, V value) {
         if (value != null) {
             predicateBuilder.and(field.eq(root, value));

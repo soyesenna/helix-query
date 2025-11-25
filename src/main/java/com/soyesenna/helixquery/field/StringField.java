@@ -15,7 +15,7 @@ import java.util.Objects;
 public record StringField(
         String name,
         Class<?> entityType
-) {
+) implements HelixField<String> {
 
     public StringField {
         Objects.requireNonNull(name, "name must not be null");

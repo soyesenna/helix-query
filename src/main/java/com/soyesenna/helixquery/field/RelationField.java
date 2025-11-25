@@ -2,6 +2,8 @@ package com.soyesenna.helixquery.field;
 
 import com.soyesenna.helixquery.expression.PathExpression;
 import com.soyesenna.helixquery.expression.PredicateExpression;
+import com.soyesenna.helixquery.order.OrderDirection;
+import com.soyesenna.helixquery.order.OrderSpecifier;
 
 import java.util.Objects;
 
@@ -15,7 +17,7 @@ public record RelationField<T>(
         String name,
         Class<T> targetType,
         Class<?> sourceEntityType
-) {
+) implements HelixField<T> {
 
     public RelationField {
         Objects.requireNonNull(name, "name must not be null");
@@ -84,5 +86,42 @@ public record RelationField<T>(
      */
     public PredicateExpression isNotNull(PathExpression<?> root) {
         return PredicateExpression.isNotNull(path(root));
+    }
+
+    // ==================== HelixField Interface ====================
+
+    /**
+     * Get the entity type that owns this relation field.
+     * Alias for sourceEntityType() for HelixField compatibility.
+     *
+     * @return the source entity class
+     */
+    @Override
+    public Class<?> entityType() {
+        return sourceEntityType;
+    }
+
+    // ==================== Ordering ====================
+
+    /**
+     * Create an ascending order specifier.
+     *
+     * @param root the root path expression
+     * @return the order specifier
+     */
+    @Override
+    public OrderSpecifier asc(PathExpression<?> root) {
+        return new OrderSpecifier(path(root), OrderDirection.ASC);
+    }
+
+    /**
+     * Create a descending order specifier.
+     *
+     * @param root the root path expression
+     * @return the order specifier
+     */
+    @Override
+    public OrderSpecifier desc(PathExpression<?> root) {
+        return new OrderSpecifier(path(root), OrderDirection.DESC);
     }
 }

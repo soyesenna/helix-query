@@ -18,7 +18,7 @@ public record NumberField<T extends Number & Comparable<T>>(
         String name,
         Class<T> type,
         Class<?> entityType
-) {
+) implements HelixField<T> {
 
     public NumberField {
         Objects.requireNonNull(name, "name must not be null");
