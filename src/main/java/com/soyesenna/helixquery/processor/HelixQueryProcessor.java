@@ -2,11 +2,14 @@ package com.soyesenna.helixquery.processor;
 
 import java.io.IOException;
 import java.io.Writer;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
@@ -22,6 +25,7 @@ import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
@@ -179,11 +183,15 @@ public class HelixQueryProcessor extends AbstractProcessor {
     }
 
     private Set<VariableElement> collectFields(TypeElement entity) {
-        return entity.getEnclosedElements().stream()
-                .filter(e -> e.getKind() == ElementKind.FIELD)
-                .map(e -> (VariableElement) e)
-                .filter(this::isProcessableField)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<String, VariableElement> fieldsByName = new LinkedHashMap<>();
+        for (TypeElement type : getTypeHierarchy(entity)) {
+            type.getEnclosedElements().stream()
+                    .filter(e -> e.getKind() == ElementKind.FIELD)
+                    .map(e -> (VariableElement) e)
+                    .filter(this::isProcessableField)
+                    .forEach(field -> fieldsByName.put(field.getSimpleName().toString(), field));
+        }
+        return new LinkedHashSet<>(fieldsByName.values());
     }
 
     private boolean isProcessableField(VariableElement field) {
@@ -309,5 +317,29 @@ public class HelixQueryProcessor extends AbstractProcessor {
             return text.substring(0, lastDot);
         }
         return "";
+    }
+
+    private List<TypeElement> getTypeHierarchy(TypeElement entity) {
+        List<TypeElement> hierarchy = new ArrayList<>();
+        TypeElement current = entity;
+        while (current != null && !isJavaLangObject(current)) {
+            hierarchy.add(current);
+            TypeMirror superType = current.getSuperclass();
+            if (superType == null || superType.getKind() == TypeKind.NONE) {
+                break;
+            }
+            Element superElement = types.asElement(superType);
+            if (superElement instanceof TypeElement superTypeElement) {
+                current = superTypeElement;
+            } else {
+                break;
+            }
+        }
+        Collections.reverse(hierarchy);
+        return hierarchy;
+    }
+
+    private boolean isJavaLangObject(TypeElement typeElement) {
+        return "java.lang.Object".equals(typeElement.getQualifiedName().toString());
     }
 }
