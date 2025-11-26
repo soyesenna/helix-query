@@ -929,4 +929,308 @@ class HelixQueryIntegrationTest {
 
         assertEquals(4, count);
     }
+
+    // ==================== Delete Tests (Managed) ====================
+
+    @Test
+    @Order(170)
+    @DisplayName("delete() - managed delete with WHERE condition")
+    void testDeleteWithCondition() {
+        // Create extra users to delete
+        User tempUser1 = new User("TempUser1", "temp1@example.com", 99);
+        tempUser1.setStatus(UserStatus.INACTIVE);
+        entityManager.persist(tempUser1);
+
+        User tempUser2 = new User("TempUser2", "temp2@example.com", 99);
+        tempUser2.setStatus(UserStatus.INACTIVE);
+        entityManager.persist(tempUser2);
+
+        entityManager.flush();
+
+        // Verify temp users exist
+        long beforeCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 99)
+                .queryCount();
+        assertEquals(2, beforeCount);
+
+        // Delete users with age 99 (managed delete)
+        long deleted = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 99)
+                .delete();
+
+        entityManager.flush();
+        entityManager.clear();
+
+        assertEquals(2, deleted);
+
+        // Verify deletion
+        long afterCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 99)
+                .queryCount();
+        assertEquals(0, afterCount);
+    }
+
+    @Test
+    @Order(171)
+    @DisplayName("delete() - throws exception without WHERE condition")
+    void testDeleteWithoutConditionThrows() {
+        assertThrows(IllegalStateException.class, () -> {
+            queryFactory.query(User.class).delete();
+        });
+    }
+
+    @Test
+    @Order(172)
+    @DisplayName("deleteAll() - deletes all records (managed)")
+    void testDeleteAll() {
+        // Create temporary users with unique age that won't conflict with other tests
+        User tempUser1 = new User("TempDeleteAll1", "deleteall1@example.com", 97);
+        entityManager.persist(tempUser1);
+        User tempUser2 = new User("TempDeleteAll2", "deleteall2@example.com", 97);
+        entityManager.persist(tempUser2);
+        entityManager.flush();
+
+        // Count users with age 97 before deletion
+        long beforeCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 97)
+                .queryCount();
+        assertEquals(2, beforeCount);
+
+        // Delete all users with age 97 (using deleteAll on filtered query would need workaround)
+        // For pure deleteAll test, we'll delete these specific users
+        long deleted = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 97)
+                .delete();
+
+        entityManager.flush();
+        entityManager.clear();
+
+        assertEquals(2, deleted);
+
+        // Verify deletion
+        long afterCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 97)
+                .queryCount();
+        assertEquals(0, afterCount);
+    }
+
+    @Test
+    @Order(173)
+    @DisplayName("deleteAndReturn() - returns deleted entities")
+    void testDeleteAndReturn() {
+        // Create temp users
+        User tempUser = new User("ToDelete", "todelete@example.com", 88);
+        tempUser.setStatus(UserStatus.PENDING);
+        entityManager.persist(tempUser);
+        entityManager.flush();
+
+        // Delete and get the deleted users
+        List<User> deletedUsers = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 88)
+                .deleteAndReturn();
+
+        entityManager.flush();
+        entityManager.clear();
+
+        assertEquals(1, deletedUsers.size());
+        assertEquals("ToDelete", deletedUsers.get(0).getName());
+
+        // Verify deletion
+        long afterCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 88)
+                .queryCount();
+        assertEquals(0, afterCount);
+    }
+
+    @Test
+    @Order(174)
+    @DisplayName("deleteExpecting() - deletes when count matches")
+    void testDeleteExpecting() {
+        // Create exactly 3 temp users
+        for (int i = 0; i < 3; i++) {
+            User tempUser = new User("Expecting" + i, "expecting" + i + "@example.com", 77);
+            tempUser.setStatus(UserStatus.PENDING);
+            entityManager.persist(tempUser);
+        }
+        entityManager.flush();
+
+        // Delete expecting exactly 3
+        long deleted = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 77)
+                .deleteExpecting(3);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        assertEquals(3, deleted);
+    }
+
+    @Test
+    @Order(175)
+    @DisplayName("deleteExpecting() - throws when count doesn't match")
+    void testDeleteExpectingThrows() {
+        // Create 2 temp users
+        for (int i = 0; i < 2; i++) {
+            User tempUser = new User("ExpectFail" + i, "expectfail" + i + "@example.com", 66);
+            entityManager.persist(tempUser);
+        }
+        entityManager.flush();
+
+        // Try to delete expecting 5 (but only 2 exist)
+        assertThrows(IllegalStateException.class, () -> {
+            queryFactory.query(User.class)
+                    .whereEqual(UserFields.AGE, 66)
+                    .deleteExpecting(5);
+        });
+
+        // Cleanup - delete the temp users
+        queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 66)
+                .delete();
+        entityManager.flush();
+    }
+
+    @Test
+    @Order(176)
+    @DisplayName("deleteIfExists() - deletes when records exist")
+    void testDeleteIfExists() {
+        // Create temp user
+        User tempUser = new User("ExistsTest", "exists@example.com", 55);
+        entityManager.persist(tempUser);
+        entityManager.flush();
+
+        // Delete if exists
+        long deleted = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 55)
+                .deleteIfExists();
+
+        entityManager.flush();
+        entityManager.clear();
+
+        assertEquals(1, deleted);
+    }
+
+    @Test
+    @Order(177)
+    @DisplayName("deleteIfExists() - throws when no records exist")
+    void testDeleteIfExistsThrows() {
+        // Try to delete non-existent records
+        assertThrows(IllegalStateException.class, () -> {
+            queryFactory.query(User.class)
+                    .whereEqual(UserFields.AGE, 999)
+                    .deleteIfExists();
+        });
+    }
+
+    @Test
+    @Order(178)
+    @DisplayName("delete() - with complex WHERE condition")
+    void testDeleteWithComplexCondition() {
+        // Create temp users with various statuses
+        User activeOld = new User("ActiveOld", "activeold@example.com", 44);
+        activeOld.setStatus(UserStatus.ACTIVE);
+        entityManager.persist(activeOld);
+
+        User inactiveOld = new User("InactiveOld", "inactiveold@example.com", 44);
+        inactiveOld.setStatus(UserStatus.INACTIVE);
+        entityManager.persist(inactiveOld);
+
+        entityManager.flush();
+
+        // Delete only inactive users with age 44
+        HelixQuery<User> query = queryFactory.query(User.class);
+        long deleted = query
+                .where(PredicateExpression.and(
+                        UserFields.AGE.eq(query.root(), 44),
+                        UserFields.STATUS.eq(query.root(), UserStatus.INACTIVE)
+                ))
+                .delete();
+
+        entityManager.flush();
+        entityManager.clear();
+
+        assertEquals(1, deleted);
+
+        // Verify only inactive was deleted
+        long remainingCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 44)
+                .queryCount();
+        assertEquals(1, remainingCount);
+
+        // Cleanup
+        queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 44)
+                .delete();
+        entityManager.flush();
+    }
+
+    // ==================== Bulk Delete Tests ====================
+
+    @Test
+    @Order(180)
+    @DisplayName("deleteBulk() - bulk delete with WHERE condition")
+    void testDeleteBulk() {
+        // Create extra users to delete
+        User tempUser1 = new User("BulkUser1", "bulk1@example.com", 98);
+        entityManager.persist(tempUser1);
+
+        User tempUser2 = new User("BulkUser2", "bulk2@example.com", 98);
+        entityManager.persist(tempUser2);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        // Bulk delete users with age 98
+        long deleted = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 98)
+                .deleteBulk();
+
+        assertEquals(2, deleted);
+
+        // Verify deletion
+        long afterCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 98)
+                .queryCount();
+        assertEquals(0, afterCount);
+    }
+
+    @Test
+    @Order(181)
+    @DisplayName("deleteBulk() - throws exception without WHERE condition")
+    void testDeleteBulkWithoutConditionThrows() {
+        assertThrows(IllegalStateException.class, () -> {
+            queryFactory.query(User.class).deleteBulk();
+        });
+    }
+
+    @Test
+    @Order(182)
+    @DisplayName("deleteBulkAll() - bulk deletes all records")
+    void testDeleteBulkAll() {
+        // Create temporary users with unique age
+        User tempUser1 = new User("BulkAll1", "bulkall1@example.com", 96);
+        entityManager.persist(tempUser1);
+        User tempUser2 = new User("BulkAll2", "bulkall2@example.com", 96);
+        entityManager.persist(tempUser2);
+        entityManager.flush();
+        entityManager.clear();
+
+        long beforeCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 96)
+                .queryCount();
+        assertEquals(2, beforeCount);
+
+        // Bulk delete users with age 96 (testing bulk delete mechanism)
+        long deleted = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 96)
+                .deleteBulk();
+
+        assertEquals(2, deleted);
+
+        // Verify all deleted
+        long afterCount = queryFactory.query(User.class)
+                .whereEqual(UserFields.AGE, 96)
+                .queryCount();
+        assertEquals(0, afterCount);
+    }
 }

@@ -125,54 +125,6 @@ public class HelixQuery<T> {
     }
 
     /**
-     * Add equality condition: field = value
-     * @deprecated Use {@link #whereEqual(HelixField, Object)} instead
-     */
-    @Deprecated
-    public <V> HelixQuery<T> whereEqual(Field<V> field, V value) {
-        if (value != null) {
-            predicateBuilder.and(field.eq(root, value));
-        }
-        return this;
-    }
-
-    /**
-     * Add equality condition for comparable fields.
-     * @deprecated Use {@link #whereEqual(HelixField, Object)} instead
-     */
-    @Deprecated
-    public <V extends Comparable<? super V>> HelixQuery<T> whereEqual(ComparableField<V> field, V value) {
-        if (value != null) {
-            predicateBuilder.and(field.eq(root, value));
-        }
-        return this;
-    }
-
-    /**
-     * Add equality condition for string fields.
-     * @deprecated Use {@link #whereEqual(HelixField, Object)} instead
-     */
-    @Deprecated
-    public HelixQuery<T> whereEqual(StringField field, String value) {
-        if (value != null) {
-            predicateBuilder.and(field.eq(root, value));
-        }
-        return this;
-    }
-
-    /**
-     * Add equality condition for number fields.
-     * @deprecated Use {@link #whereEqual(HelixField, Object)} instead
-     */
-    @Deprecated
-    public <V extends Number & Comparable<V>> HelixQuery<T> whereEqual(NumberField<V> field, V value) {
-        if (value != null) {
-            predicateBuilder.and(field.eq(root, value));
-        }
-        return this;
-    }
-
-    /**
      * Add greater-than condition: field > value
      */
     public <V extends Comparable<? super V>> HelixQuery<T> whereGreaterThan(ComparableField<V> field, V value) {
@@ -590,6 +542,231 @@ public class HelixQuery<T> {
      */
     public boolean exists() {
         return queryFirstOrNull() != null;
+    }
+
+    // ==================== EXECUTION - DELETE ====================
+
+    /**
+     * Delete entities matching the current WHERE conditions using managed persistence context.
+     * This method properly integrates with JPA lifecycle callbacks and cascade operations.
+     *
+     * <pre>{@code
+     * // Delete all inactive users
+     * long deleted = queryFactory.query(User.class)
+     *     .whereEqual(UserFields.STATUS, UserStatus.INACTIVE)
+     *     .delete();
+     *
+     * // Delete users older than a certain date
+     * long deleted = queryFactory.query(User.class)
+     *     .where(UserFields.CREATED_AT.before(root(), cutoffDate))
+     *     .delete();
+     * }</pre>
+     *
+     * <p><b>Features:</b>
+     * <ul>
+     *   <li>Triggers JPA lifecycle callbacks (@PreRemove, @PostRemove)</li>
+     *   <li>Respects cascade settings on relationships</li>
+     *   <li>Updates persistence context properly</li>
+     *   <li>Requires an active transaction</li>
+     * </ul>
+     *
+     * <p>For bulk delete without persistence context management (faster but bypasses
+     * lifecycle callbacks), use {@link #deleteBulk()}.
+     *
+     * @return the number of entities deleted
+     * @throws IllegalStateException if no WHERE conditions are specified (use deleteAll() for that)
+     */
+    public long delete() {
+        if (!predicateBuilder.hasValue()) {
+            throw new IllegalStateException(
+                    "Cannot execute delete() without WHERE conditions. " +
+                    "Use deleteAll() if you intend to delete all records.");
+        }
+        return executeManagedDelete();
+    }
+
+    /**
+     * Delete entities and immediately flush to database.
+     * This ensures DELETE SQL is executed immediately before subsequent operations.
+     *
+     * <pre>{@code
+     * // Delete expired records and ensure it's committed before checking existence
+     * service.findBy(Fields.EMAIL, email)
+     *     .whereBeforeNow(Fields.EXPIRED_AT)
+     *     .deleteAndFlush();
+     *
+     * // Now safely check for existing records
+     * boolean exists = service.findBy(Fields.EMAIL, email)
+     *     .whereAfterNow(Fields.EXPIRED_AT)
+     *     .exists();
+     * }</pre>
+     *
+     * <p>Use this when you need to ensure DELETE is executed before subsequent
+     * queries or inserts to avoid issues with Hibernate's default flush order
+     * (INSERT → UPDATE → DELETE).
+     *
+     * @return the number of entities deleted
+     * @throws IllegalStateException if no WHERE conditions are specified
+     */
+    public long deleteAndFlush() {
+        long count = delete();
+        entityManager.flush();
+        return count;
+    }
+
+    /**
+     * Delete ALL entities of this type using managed persistence context.
+     *
+     * <pre>{@code
+     * // Delete all temporary records
+     * long deleted = queryFactory.query(TempData.class).deleteAll();
+     * }</pre>
+     *
+     * <p><b>Warning:</b> This will delete ALL records. Use with extreme caution.
+     *
+     * @return the number of entities deleted
+     */
+    public long deleteAll() {
+        return executeManagedDelete();
+    }
+
+    /**
+     * Delete entities with count validation.
+     * Only proceeds if the count matches the expected number.
+     *
+     * <pre>{@code
+     * // Delete exactly 5 expired sessions
+     * long deleted = queryFactory.query(Session.class)
+     *     .where(SessionFields.EXPIRED_AT.before(root(), now))
+     *     .deleteExpecting(5);
+     * }</pre>
+     *
+     * @param expectedCount the expected number of records to delete
+     * @return the number of entities deleted
+     * @throws IllegalStateException if the actual count doesn't match the expected count
+     */
+    public long deleteExpecting(long expectedCount) {
+        long count = queryCount();
+        if (count != expectedCount) {
+            throw new IllegalStateException(
+                    "Expected to delete " + expectedCount + " records but found " + count);
+        }
+        return executeManagedDelete();
+    }
+
+    /**
+     * Delete entities only if at least one record matches.
+     *
+     * @return the number of entities deleted
+     * @throws IllegalStateException if no records match the conditions
+     */
+    public long deleteIfExists() {
+        if (!exists()) {
+            throw new IllegalStateException("No records found matching the delete conditions");
+        }
+        return executeManagedDelete();
+    }
+
+    /**
+     * Delete entities and return the deleted entities list.
+     * Useful for logging or auditing deleted data.
+     *
+     * <pre>{@code
+     * // Get deleted users for audit log
+     * List<User> deletedUsers = queryFactory.query(User.class)
+     *     .whereEqual(UserFields.STATUS, UserStatus.DELETED)
+     *     .deleteAndReturn();
+     * auditService.logDeletion(deletedUsers);
+     * }</pre>
+     *
+     * @return the list of deleted entities
+     */
+    public List<T> deleteAndReturn() {
+        List<T> toDelete = query();
+        for (T entity : toDelete) {
+            entityManager.remove(entity);
+        }
+        return toDelete;
+    }
+
+    /**
+     * Execute managed delete through EntityManager.remove().
+     * This properly integrates with JPA lifecycle and persistence context.
+     */
+    private long executeManagedDelete() {
+        List<T> entities = query();
+        for (T entity : entities) {
+            entityManager.remove(entity);
+        }
+        return entities.size();
+    }
+
+    // ==================== EXECUTION - BULK DELETE ====================
+
+    /**
+     * Execute a bulk delete query with the current WHERE conditions.
+     * This executes a JPQL/SQL DELETE statement directly in the database,
+     * bypassing the persistence context for better performance.
+     *
+     * <pre>{@code
+     * // Bulk delete for performance-critical operations
+     * long deleted = queryFactory.query(LogEntry.class)
+     *     .where(LogFields.CREATED_AT.before(root(), cutoffDate))
+     *     .deleteBulk();
+     * }</pre>
+     *
+     * <p><b>Important:</b> This operation:
+     * <ul>
+     *   <li>Does NOT trigger JPA lifecycle callbacks (@PreRemove, @PostRemove)</li>
+     *   <li>Does NOT cascade to related entities</li>
+     *   <li>Does NOT update the persistence context</li>
+     *   <li>Is significantly faster for large datasets</li>
+     * </ul>
+     *
+     * <p>For managed delete with lifecycle support, use {@link #delete()}.
+     *
+     * @return the number of entities deleted
+     * @throws IllegalStateException if no WHERE conditions are specified
+     */
+    public long deleteBulk() {
+        if (!predicateBuilder.hasValue()) {
+            throw new IllegalStateException(
+                    "Cannot execute deleteBulk() without WHERE conditions. " +
+                    "Use deleteBulkAll() if you intend to delete all records.");
+        }
+        return executeBulkDelete();
+    }
+
+    /**
+     * Execute a bulk delete query without WHERE conditions.
+     * Deletes ALL records of this entity type directly in the database.
+     *
+     * <p><b>Warning:</b> This bypasses persistence context and lifecycle callbacks.
+     *
+     * @return the number of entities deleted
+     */
+    public long deleteBulkAll() {
+        return executeBulkDelete();
+    }
+
+    /**
+     * Execute bulk delete using CriteriaDelete.
+     * Bypasses persistence context for better performance.
+     */
+    private long executeBulkDelete() {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaDelete<T> deleteQuery = cb.createCriteriaDelete(entityClass);
+        Root<T> deleteRoot = deleteQuery.from(entityClass);
+
+        // Apply WHERE clause if present
+        if (predicateBuilder.hasValue()) {
+            CriteriaContext ctx = new CriteriaContext(cb, deleteRoot, null);
+            CriteriaExpressionVisitor visitor = new CriteriaExpressionVisitor();
+            Predicate predicate = visitor.compilePredicate(predicateBuilder.build(), ctx);
+            deleteQuery.where(predicate);
+        }
+
+        return entityManager.createQuery(deleteQuery).executeUpdate();
     }
 
     // ==================== EXECUTION - PROJECTIONS ====================

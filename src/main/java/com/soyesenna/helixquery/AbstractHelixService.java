@@ -38,6 +38,37 @@ public abstract class AbstractHelixService<T> {
     // ==================== CRUD Operations ====================
 
     /**
+     * Save an entity - persist if new (no ID), merge if existing (has ID).
+     * This method automatically determines whether to use persist or merge
+     * based on the entity's identifier value.
+     *
+     * <pre>{@code
+     * // New entity (ID is null) - calls persist
+     * User newUser = new User("John", "john@example.com");
+     * User saved = userService.save(newUser);
+     *
+     * // Existing entity (ID is set) - calls merge
+     * User existing = userService.findById(1L);
+     * existing.setName("Updated Name");
+     * User updated = userService.save(existing);
+     * }</pre>
+     *
+     * @param entity the entity to save
+     * @return the saved entity (same instance for persist, managed copy for merge)
+     */
+    public T save(T entity) {
+        Object id = em.getEntityManagerFactory()
+                .getPersistenceUnitUtil()
+                .getIdentifier(entity);
+        if (id == null) {
+            em.persist(entity);
+            return entity;
+        } else {
+            return em.merge(entity);
+        }
+    }
+
+    /**
      * Persist a new entity.
      *
      * @param entity the entity to persist

@@ -24,12 +24,12 @@ public class CriteriaContext {
      *
      * @param criteriaBuilder the JPA criteria builder
      * @param root            the query root
-     * @param query           the criteria query
+     * @param query           the criteria query (may be null for delete/update operations)
      */
     public CriteriaContext(CriteriaBuilder criteriaBuilder, Root<?> root, CriteriaQuery<?> query) {
         this.criteriaBuilder = Objects.requireNonNull(criteriaBuilder, "criteriaBuilder must not be null");
         this.root = Objects.requireNonNull(root, "root must not be null");
-        this.query = Objects.requireNonNull(query, "query must not be null");
+        this.query = query; // nullable for CriteriaDelete/CriteriaUpdate operations
         this.joins = new HashMap<>();
         this.fetches = new HashMap<>();
     }
