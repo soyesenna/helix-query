@@ -6,26 +6,69 @@ import com.soyesenna.helixquery.field.Field;
 import com.soyesenna.helixquery.field.HelixField;
 import com.soyesenna.helixquery.field.NumberField;
 import com.soyesenna.helixquery.field.StringField;
+import jakarta.annotation.PostConstruct;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 
 /**
  * Abstract base class for services using HelixQuery.
  * Provides common CRUD operations and query entry points.
  * Replaces AbstractQueryService from the QueryDSL-based implementation.
  *
+ * <p>This class supports two usage patterns:</p>
+ *
+ * <h3>1. Zero-boilerplate (recommended)</h3>
+ * <pre>{@code
+ * @Service
+ * public class UserService extends AbstractHelixService<User> {
+ *     // No constructor needed! Spring auto-wires everything.
+ * }
+ * }</pre>
+ *
+ * <h3>2. Explicit constructor (for testing or special cases)</h3>
+ * <pre>{@code
+ * @Service
+ * public class UserService extends AbstractHelixService<User> {
+ *     public UserService(HelixQueryFactory queryFactory) {
+ *         super(queryFactory, User.class);
+ *     }
+ * }
+ * }</pre>
+ *
  * @param <T> the entity type
  */
 public abstract class AbstractHelixService<T> {
 
-    protected final HelixQueryFactory queryFactory;
-    protected final Class<T> entityClass;
+    @Autowired
+    protected HelixQueryFactory queryFactory;
+
+    protected Class<T> entityClass;
 
     @PersistenceContext
     protected EntityManager em;
 
     /**
-     * Create a new service.
+     * Default constructor for Spring dependency injection.
+     * The entityClass is automatically resolved from the generic type parameter.
+     *
+     * <pre>{@code
+     * @Service
+     * public class UserService extends AbstractHelixService<User> {
+     *     // No constructor needed!
+     * }
+     * }</pre>
+     */
+    protected AbstractHelixService() {
+        // entityClass will be resolved in @PostConstruct
+    }
+
+    /**
+     * Create a new service with explicit parameters.
+     * Useful for testing or when automatic type resolution is not possible.
      *
      * @param queryFactory the query factory
      * @param entityClass  the entity class
@@ -33,6 +76,62 @@ public abstract class AbstractHelixService<T> {
     protected AbstractHelixService(HelixQueryFactory queryFactory, Class<T> entityClass) {
         this.queryFactory = queryFactory;
         this.entityClass = entityClass;
+    }
+
+    /**
+     * Initialize the entity class from the generic type parameter.
+     * Called automatically by Spring after dependency injection.
+     */
+    @PostConstruct
+    private void initEntityClass() {
+        if (this.entityClass == null) {
+            this.entityClass = resolveEntityClass();
+        }
+    }
+
+    /**
+     * Resolve the entity class from the generic type parameter using reflection.
+     * Handles direct inheritance and intermediate class hierarchies.
+     *
+     * @return the resolved entity class
+     * @throws IllegalStateException if the entity class cannot be resolved
+     */
+    @SuppressWarnings("unchecked")
+    private Class<T> resolveEntityClass() {
+        Class<?> clazz = getClass();
+
+        while (clazz != null) {
+            Type genericSuperclass = clazz.getGenericSuperclass();
+
+            if (genericSuperclass instanceof ParameterizedType) {
+                ParameterizedType paramType = (ParameterizedType) genericSuperclass;
+
+                // Check if this is AbstractHelixService
+                if (paramType.getRawType() == AbstractHelixService.class) {
+                    Type typeArg = paramType.getActualTypeArguments()[0];
+
+                    if (typeArg instanceof Class) {
+                        return (Class<T>) typeArg;
+                    } else if (typeArg instanceof ParameterizedType) {
+                        // Handle cases like AbstractHelixService<List<User>>
+                        return (Class<T>) ((ParameterizedType) typeArg).getRawType();
+                    }
+
+                    throw new IllegalStateException(
+                            "Cannot resolve entity class: type argument '" + typeArg +
+                                    "' is not a concrete class. " +
+                                    "Please use the constructor with explicit entityClass parameter: " +
+                                    "super(queryFactory, YourEntity.class)");
+                }
+            }
+
+            clazz = clazz.getSuperclass();
+        }
+
+        throw new IllegalStateException(
+                "Cannot resolve entity class from generic type for " + getClass().getName() + ". " +
+                        "Please use the constructor with explicit entityClass parameter: " +
+                        "super(queryFactory, YourEntity.class)");
     }
 
     // ==================== CRUD Operations ====================
