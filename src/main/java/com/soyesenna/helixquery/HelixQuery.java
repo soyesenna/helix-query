@@ -13,6 +13,8 @@ import jakarta.persistence.NoResultException;
 import jakarta.persistence.Tuple;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.criteria.*;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 
@@ -337,6 +339,73 @@ public class HelixQuery<T> {
             }
         }
         return this;
+    }
+
+    /**
+     * Apply Spring Pageable with a specific field for ordering.
+     *
+     * <pre>{@code
+     * // Sort by embedded field with ASC
+     * contestService.find()
+     *     .pageableOrderByAsc(pageable, ContestFields.APPLICATION_PERIOD_APPLICATION_START_AT)
+     *     .query();
+     * }</pre>
+     *
+     * @param pageable  the pageable (offset and limit are applied)
+     * @param field     the field to order by
+     * @param ascending true for ASC, false for DESC
+     * @return this query for chaining
+     */
+    public HelixQuery<T> pageableOrderBy(Pageable pageable, HelixField<?> field, boolean ascending) {
+        if (pageable == null) {
+            return this;
+        }
+
+        this.offset = pageable.getOffset();
+        this.limit = (long) pageable.getPageSize();
+
+        if (field != null) {
+            if (ascending) {
+                orders.add(field.asc(root));
+            } else {
+                orders.add(field.desc(root));
+            }
+        }
+        return this;
+    }
+
+    /**
+     * Apply Spring Pageable with ascending order by the specified field.
+     *
+     * <pre>{@code
+     * contestService.find()
+     *     .pageableOrderByAsc(pageable, ContestFields.APPLICATION_PERIOD_APPLICATION_START_AT)
+     *     .query();
+     * }</pre>
+     *
+     * @param pageable the pageable (offset and limit are applied)
+     * @param field    the field to order by ascending
+     * @return this query for chaining
+     */
+    public HelixQuery<T> pageableOrderByAsc(Pageable pageable, HelixField<?> field) {
+        return pageableOrderBy(pageable, field, true);
+    }
+
+    /**
+     * Apply Spring Pageable with descending order by the specified field.
+     *
+     * <pre>{@code
+     * contestService.find()
+     *     .pageableOrderByDesc(pageable, ContestFields.CREATED_AT)
+     *     .query();
+     * }</pre>
+     *
+     * @param pageable the pageable (offset and limit are applied)
+     * @param field    the field to order by descending
+     * @return this query for chaining
+     */
+    public HelixQuery<T> pageableOrderByDesc(Pageable pageable, HelixField<?> field) {
+        return pageableOrderBy(pageable, field, false);
     }
 
     // ==================== JOINS ====================

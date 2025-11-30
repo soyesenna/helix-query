@@ -244,6 +244,7 @@ public class HelixQueryProcessor extends AbstractProcessor {
         ENUM,
         COLLECTION,
         RELATION,
+        EMBEDDED,
         COMPARABLE,
         SIMPLE
     }
@@ -254,6 +255,11 @@ public class HelixQueryProcessor extends AbstractProcessor {
         // Check for collection first
         if (isCollection(type)) {
             return FieldCategory.COLLECTION;
+        }
+
+        // Check for embedded (before relation, as embedded is also an object reference)
+        if (isEmbedded(field)) {
+            return FieldCategory.EMBEDDED;
         }
 
         // Check for relation
@@ -306,6 +312,7 @@ public class HelixQueryProcessor extends AbstractProcessor {
             case ENUM -> renderComparableField(constName, fieldName, type, entityType);
             case COLLECTION -> renderCollectionField(constName, fieldName, type, entityType);
             case RELATION -> generateRelations ? renderRelationField(constName, fieldName, type, entityType) : "";
+            case EMBEDDED -> renderEmbeddedFields(constName, fieldName, type, entityType);
             case COMPARABLE -> renderComparableField(constName, fieldName, type, entityType);
             case SIMPLE -> renderSimpleField(constName, fieldName, type, entityType);
         };
@@ -368,12 +375,170 @@ public class HelixQueryProcessor extends AbstractProcessor {
         );
     }
 
+    /**
+     * Render flattened fields for an @Embedded field.
+     * Analyzes the Embeddable class and generates individual field constants
+     * with nested path names (e.g., "address.street" -> ADDRESS_STREET).
+     *
+     * @param constPrefix  the constant name prefix (e.g., "ADDRESS")
+     * @param pathPrefix   the field path prefix (e.g., "address")
+     * @param type         the type of the embedded field
+     * @param entityType   the owning entity type
+     * @return the generated field constants as a string
+     */
+    private String renderEmbeddedFields(String constPrefix, String pathPrefix, TypeMirror type, String entityType) {
+        Element typeElement = types.asElement(type);
+        if (!(typeElement instanceof TypeElement embeddableType)) {
+            // Fallback to simple field if type cannot be resolved
+            return renderSimpleField(constPrefix, pathPrefix, type, entityType);
+        }
+
+        StringBuilder result = new StringBuilder();
+        result.append(String.format("    // Embedded fields from %s%n", embeddableType.getSimpleName()));
+
+        // Collect fields from the Embeddable class
+        Set<VariableElement> embeddedFields = collectEmbeddableFields(embeddableType);
+
+        for (VariableElement embeddedField : embeddedFields) {
+            String nestedFieldName = embeddedField.getSimpleName().toString();
+            String nestedPath = pathPrefix + "." + nestedFieldName;
+            String nestedConstName = constPrefix + "_" + toUpperSnake(nestedFieldName);
+            TypeMirror nestedType = embeddedField.asType();
+
+            FieldCategory nestedCategory = categorizeField(nestedType, embeddedField);
+
+            String fieldConstant = switch (nestedCategory) {
+                case STRING -> renderStringFieldWithPath(nestedConstName, nestedPath, entityType);
+                case NUMBER -> renderNumberFieldWithPath(nestedConstName, nestedPath, nestedType, entityType);
+                case DATETIME -> renderDateTimeFieldWithPath(nestedConstName, nestedPath, nestedType, entityType);
+                case BOOLEAN -> renderSimpleFieldWithPath(nestedConstName, nestedPath, nestedType, entityType);
+                case ENUM -> renderComparableFieldWithPath(nestedConstName, nestedPath, nestedType, entityType);
+                case EMBEDDED -> renderEmbeddedFields(nestedConstName, nestedPath, nestedType, entityType);
+                case COMPARABLE -> renderComparableFieldWithPath(nestedConstName, nestedPath, nestedType, entityType);
+                case COLLECTION, RELATION -> ""; // Skip relations and collections inside embedded
+                case SIMPLE -> renderSimpleFieldWithPath(nestedConstName, nestedPath, nestedType, entityType);
+            };
+
+            if (!fieldConstant.isEmpty()) {
+                result.append(fieldConstant);
+            }
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Collect fields from an Embeddable class.
+     * Supports both regular classes and Java records.
+     */
+    private Set<VariableElement> collectEmbeddableFields(TypeElement embeddableType) {
+        Map<String, VariableElement> fieldsByName = new LinkedHashMap<>();
+
+        // Check if it's a record (Java 14+)
+        if (embeddableType.getKind() == ElementKind.RECORD) {
+            // For records, use record components which map to fields
+            embeddableType.getRecordComponents().stream()
+                    .forEach(component -> {
+                        // Record components have corresponding fields with same name
+                        String fieldName = component.getSimpleName().toString();
+                        // Find the corresponding field
+                        embeddableType.getEnclosedElements().stream()
+                                .filter(e -> e.getKind() == ElementKind.FIELD)
+                                .map(e -> (VariableElement) e)
+                                .filter(f -> f.getSimpleName().toString().equals(fieldName))
+                                .findFirst()
+                                .ifPresent(field -> fieldsByName.put(fieldName, field));
+                    });
+        } else {
+            // For regular classes, use getAllMembers
+            elements.getAllMembers(embeddableType).stream()
+                    .filter(e -> e.getKind() == ElementKind.FIELD)
+                    .map(e -> (VariableElement) e)
+                    .filter(this::isEmbeddableFieldProcessable)
+                    .forEach(field -> fieldsByName.put(field.getSimpleName().toString(), field));
+        }
+
+        return new LinkedHashSet<>(fieldsByName.values());
+    }
+
+    /**
+     * Check if a field from an Embeddable class should be processed.
+     * More lenient than isProcessableField() - only checks for static.
+     * Note: final is allowed because record fields are implicitly final.
+     */
+    private boolean isEmbeddableFieldProcessable(VariableElement field) {
+        Set<Modifier> modifiers = field.getModifiers();
+        // Skip static fields only (allow final for potential record-like patterns)
+        if (modifiers.contains(Modifier.STATIC)) {
+            return false;
+        }
+        // Skip synthetic or compiler-generated fields
+        if (field.getSimpleName().toString().startsWith("$")) {
+            return false;
+        }
+        // Skip fields inherited from Object
+        Element enclosing = field.getEnclosingElement();
+        if (enclosing instanceof TypeElement typeElement) {
+            if ("java.lang.Object".equals(typeElement.getQualifiedName().toString())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // ==================== Field renderers with custom path support ====================
+
+    private String renderStringFieldWithPath(String constName, String path, String entityType) {
+        return String.format(
+                "    public static final StringField %s = new StringField(\"%s\", %s.class);%n",
+                constName, path, entityType
+        );
+    }
+
+    private String renderNumberFieldWithPath(String constName, String path, TypeMirror type, String entityType) {
+        String valueType = boxedTypeName(type);
+        return String.format(
+                "    public static final NumberField<%s> %s = new NumberField<>(\"%s\", %s.class, %s.class);%n",
+                valueType, constName, path, boxedErasure(type), entityType
+        );
+    }
+
+    private String renderDateTimeFieldWithPath(String constName, String path, TypeMirror type, String entityType) {
+        String valueType = boxedTypeName(type);
+        return String.format(
+                "    public static final DateTimeField<%s> %s = new DateTimeField<>(\"%s\", %s.class, %s.class);%n",
+                valueType, constName, path, boxedErasure(type), entityType
+        );
+    }
+
+    private String renderComparableFieldWithPath(String constName, String path, TypeMirror type, String entityType) {
+        String valueType = boxedTypeName(type);
+        return String.format(
+                "    public static final ComparableField<%s> %s = new ComparableField<>(\"%s\", %s.class, %s.class);%n",
+                valueType, constName, path, boxedErasure(type), entityType
+        );
+    }
+
+    private String renderSimpleFieldWithPath(String constName, String path, TypeMirror type, String entityType) {
+        String valueType = boxedTypeName(type);
+        return String.format(
+                "    public static final Field<%s> %s = new Field<>(\"%s\", %s.class, %s.class);%n",
+                valueType, constName, path, boxedErasure(type), entityType
+        );
+    }
+
     private boolean isRelation(VariableElement field) {
         return hasAnyAnnotation(field,
                 "jakarta.persistence.ManyToOne",
                 "javax.persistence.ManyToOne",
                 "jakarta.persistence.OneToOne",
                 "javax.persistence.OneToOne");
+    }
+
+    private boolean isEmbedded(VariableElement field) {
+        return hasAnyAnnotation(field,
+                "jakarta.persistence.Embedded",
+                "javax.persistence.Embedded");
     }
 
     private boolean isCollection(TypeMirror type) {
