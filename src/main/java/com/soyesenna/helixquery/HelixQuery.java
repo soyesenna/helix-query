@@ -562,6 +562,110 @@ public class HelixQuery<T> {
         return query();
     }
 
+    // ==================== EXECUTION - PAGE ====================
+
+    /**
+     * Execute the query and return results as a Spring Data Page.
+     * Uses the current offset/limit settings for pagination.
+     *
+     * <pre>{@code
+     * Page<Contest> page = contestService.find()
+     *     .whereEqual(ContestFields.VISIBLE, true)
+     *     .pageableOrderByAsc(pageable, ContestFields.CREATED_AT)
+     *     .queryPage();
+     * }</pre>
+     *
+     * @return a Page containing the results
+     */
+    public Page<T> queryPage() {
+        long total = queryCount();
+        List<T> content = query();
+
+        // Create a Pageable from current offset/limit
+        int page = (offset != null && limit != null && limit > 0) ? (int) (offset / limit) : 0;
+        int size = (limit != null && limit > 0) ? limit.intValue() : content.size();
+
+        return new PageImpl<>(content, org.springframework.data.domain.PageRequest.of(page, Math.max(size, 1)), total);
+    }
+
+    /**
+     * Execute the query with Pageable and return results as a Spring Data Page.
+     *
+     * <pre>{@code
+     * Page<Contest> page = contestService.find()
+     *     .whereEqual(ContestFields.VISIBLE, true)
+     *     .queryPage(pageable, sortProperty -> switch (sortProperty) {
+     *         case "createdAt" -> ContestFields.CREATED_AT;
+     *         default -> ContestFields.ID;
+     *     });
+     * }</pre>
+     *
+     * @param pageable          the pageable for pagination and sorting
+     * @param sortFieldResolver function to resolve sort property names to fields
+     * @return a Page containing the results
+     */
+    public Page<T> queryPage(Pageable pageable, Function<String, Field<?>> sortFieldResolver) {
+        pageable(pageable, sortFieldResolver);
+        long total = queryCount();
+        List<T> content = query();
+        return new PageImpl<>(content, pageable, total);
+    }
+
+    /**
+     * Execute the query with Pageable and specific sort field, return as Page.
+     *
+     * <pre>{@code
+     * Page<Contest> page = contestService.find()
+     *     .whereEqual(ContestFields.VISIBLE, true)
+     *     .queryPage(pageable, ContestFields.APPLICATION_PERIOD_APPLICATION_START_AT, true);
+     * }</pre>
+     *
+     * @param pageable  the pageable for pagination
+     * @param field     the field to order by
+     * @param ascending true for ASC, false for DESC
+     * @return a Page containing the results
+     */
+    public Page<T> queryPage(Pageable pageable, HelixField<?> field, boolean ascending) {
+        pageableOrderBy(pageable, field, ascending);
+        long total = queryCount();
+        List<T> content = query();
+        return new PageImpl<>(content, pageable, total);
+    }
+
+    /**
+     * Execute the query with Pageable and ascending sort, return as Page.
+     *
+     * <pre>{@code
+     * Page<Contest> page = contestService.find()
+     *     .whereEqual(ContestFields.VISIBLE, true)
+     *     .queryPageOrderByAsc(pageable, ContestFields.APPLICATION_PERIOD_APPLICATION_START_AT);
+     * }</pre>
+     *
+     * @param pageable the pageable for pagination
+     * @param field    the field to order by ascending
+     * @return a Page containing the results
+     */
+    public Page<T> queryPageOrderByAsc(Pageable pageable, HelixField<?> field) {
+        return queryPage(pageable, field, true);
+    }
+
+    /**
+     * Execute the query with Pageable and descending sort, return as Page.
+     *
+     * <pre>{@code
+     * Page<Contest> page = contestService.find()
+     *     .whereEqual(ContestFields.VISIBLE, true)
+     *     .queryPageOrderByDesc(pageable, ContestFields.CREATED_AT);
+     * }</pre>
+     *
+     * @param pageable the pageable for pagination
+     * @param field    the field to order by descending
+     * @return a Page containing the results
+     */
+    public Page<T> queryPageOrderByDesc(Pageable pageable, HelixField<?> field) {
+        return queryPage(pageable, field, false);
+    }
+
     // ==================== EXECUTION - SINGLE ====================
 
     /**
