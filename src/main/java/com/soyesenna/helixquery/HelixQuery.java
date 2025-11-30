@@ -385,6 +385,42 @@ public class HelixQuery<T> {
         return this;
     }
 
+    /**
+     * Add a left fetch join for collection fields (eager loading).
+     *
+     * <pre>{@code
+     * // Fetch join a OneToMany collection
+     * List<TicketTemplate> templates = queryFactory.query(TicketTemplate.class)
+     *     .leftFetchJoin(TicketTemplateFields.TICKET_OPTIONS)
+     *     .distinct()
+     *     .query();
+     * }</pre>
+     *
+     * @param collection the collection field to fetch join
+     * @return this query for chaining
+     */
+    public <E> HelixQuery<T> leftFetchJoin(CollectionField<E> collection) {
+        joins.add(new JoinSpec(collection.name(), JoinType.LEFT, true));
+        return this;
+    }
+
+    public <E> HelixQuery<T> leftFetchJoinDistinct(CollectionField<E> collection) {
+        joins.add(new JoinSpec(collection.name(), JoinType.LEFT, true));
+        this.distinct = true;
+        return this;
+    }
+
+    /**
+     * Add a fetch join for collection fields (eager loading).
+     *
+     * @param collection the collection field to fetch join
+     * @return this query for chaining
+     */
+    public <E> HelixQuery<T> fetchJoin(CollectionField<E> collection) {
+        joins.add(new JoinSpec(collection.name(), JoinType.INNER, true));
+        return this;
+    }
+
     // ==================== GROUP BY / HAVING ====================
 
     /**
