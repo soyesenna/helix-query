@@ -16,6 +16,7 @@ public class PathExpression<T> implements Expression<T> {
     private final String attributeName;
     private final PathExpression<?> parent;
     private final Class<?> rootType;
+    private final String relationPath;
 
     /**
      * Create a root path expression for an entity.
@@ -28,6 +29,7 @@ public class PathExpression<T> implements Expression<T> {
         this.attributeName = null;
         this.parent = null;
         this.rootType = rootType;
+        this.relationPath = null;
     }
 
     /**
@@ -38,10 +40,34 @@ public class PathExpression<T> implements Expression<T> {
      * @param parent        the parent path
      */
     public PathExpression(Class<T> type, String attributeName, PathExpression<?> parent) {
+        this(type, attributeName, parent, null);
+    }
+
+    /**
+     * Create an attribute path expression with a relation path for auto-join.
+     *
+     * @param type          the attribute type
+     * @param attributeName the attribute name (can be a nested path like "department.name")
+     * @param parent        the parent path
+     * @param relationPath  the relation path to auto-join (e.g., "department")
+     */
+    public PathExpression(Class<T> type, String attributeName, PathExpression<?> parent, String relationPath) {
         this.type = Objects.requireNonNull(type, "type must not be null");
         this.attributeName = Objects.requireNonNull(attributeName, "attributeName must not be null");
         this.parent = Objects.requireNonNull(parent, "parent must not be null");
         this.rootType = parent.getRootType();
+        this.relationPath = relationPath;
+    }
+
+    /**
+     * Get the relation path for auto-join.
+     * When this path references a field through a relation (e.g., "department.name"),
+     * this returns the relation path ("department") that should be automatically joined.
+     *
+     * @return the relation path to auto-join, or null if not applicable
+     */
+    public String getRelationPath() {
+        return relationPath;
     }
 
     @Override

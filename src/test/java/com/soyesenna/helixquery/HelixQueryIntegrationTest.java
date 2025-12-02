@@ -475,7 +475,7 @@ class HelixQueryIntegrationTest {
     void testRelationFieldJoin() {
         HelixQuery<User> query = queryFactory.query(User.class);
         List<User> users = query
-                .join(UserFields.DEPARTMENT)
+                .join(UserFields.DEPARTMENT.$)
                 .query();
 
         assertEquals(4, users.size());
@@ -487,7 +487,7 @@ class HelixQueryIntegrationTest {
     void testRelationFieldFetchJoin() {
         HelixQuery<User> query = queryFactory.query(User.class);
         List<User> users = query
-                .fetchJoin(UserFields.DEPARTMENT)
+                .fetchJoin(UserFields.DEPARTMENT.$)
                 .query();
 
         assertEquals(4, users.size());
@@ -836,7 +836,7 @@ class HelixQueryIntegrationTest {
                 queryFactory.query(com.soyesenna.helixquery.entity.Order.class);
 
         List<com.soyesenna.helixquery.entity.Order> orders = query
-                .fetchJoin(OrderFields.USER)
+                .fetchJoin(OrderFields.USER.$)
                 .orderByDesc(OrderFields.ORDER_DATE)
                 .query();
 
@@ -1162,6 +1162,168 @@ class HelixQueryIntegrationTest {
                 .whereEqual(UserFields.AGE, 44)
                 .delete();
         entityManager.flush();
+    }
+
+    // ==================== Nested Relation Field Tests ====================
+
+    @Test
+    @Order(190)
+    @DisplayName("Nested relation fields - query by department name using DEPARTMENT.NAME")
+    void testNestedRelationFieldDepartmentName() {
+        // Query users by department name using nested field accessor
+        List<User> users = queryFactory.query(User.class)
+                .whereEqual(UserFields.DEPARTMENT.NAME, "Engineering")
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+    }
+
+    @Test
+    @Order(191)
+    @DisplayName("Nested relation fields - query by department id using DEPARTMENT.ID")
+    void testNestedRelationFieldDepartmentId() {
+        // Get the department ID first
+        Department dept = queryFactory.query(Department.class)
+                .whereEqual(DepartmentFields.NAME, "Marketing")
+                .queryOneOrNull();
+        assertNotNull(dept);
+
+        // Query users by department ID using nested field accessor
+        List<User> users = queryFactory.query(User.class)
+                .whereEqual(UserFields.DEPARTMENT.ID, dept.getId())
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Charlie", users.get(0).getName());
+        assertEquals("Diana", users.get(1).getName());
+    }
+
+    @Test
+    @Order(192)
+    @DisplayName("Nested relation fields - contains search on nested field")
+    void testNestedRelationFieldContains() {
+        // Query users where department name contains "Market"
+        List<User> users = queryFactory.query(User.class)
+                .whereContains(UserFields.DEPARTMENT.NAME, "Market")
+                .query();
+
+        assertEquals(2, users.size());
+    }
+
+    @Test
+    @Order(193)
+    @DisplayName("Nested relation fields - Order entity with USER.NAME")
+    void testNestedRelationFieldOrderUserName() {
+        // Query orders by user name using nested field accessor
+        List<com.soyesenna.helixquery.entity.Order> orders = queryFactory.query(com.soyesenna.helixquery.entity.Order.class)
+                .whereEqual(OrderFields.USER.NAME, "Alice")
+                .orderByAsc(OrderFields.ORDER_NUMBER)
+                .query();
+
+        assertEquals(2, orders.size()); // Alice has 2 orders
+        assertEquals("ORD-001", orders.get(0).getOrderNumber());
+        assertEquals("ORD-003", orders.get(1).getOrderNumber());
+    }
+
+    @Test
+    @Order(194)
+    @DisplayName("Nested relation fields - OrderItem with PRODUCT.NAME")
+    void testNestedRelationFieldOrderItemProductName() {
+        // Query order items by product name using nested field accessor
+        List<OrderItem> items = queryFactory.query(OrderItem.class)
+                .whereEqual(OrderItemFields.PRODUCT.NAME, "Phone")
+                .query();
+
+        assertEquals(2, items.size()); // Phone appears in 2 order items
+    }
+
+    @Test
+    @Order(195)
+    @DisplayName("Nested relation fields - OrderItem filter by PRODUCT.PRICE")
+    void testNestedRelationFieldOrderItemProductPrice() {
+        // Query order items where product price is greater than 500
+        HelixQuery<OrderItem> query = queryFactory.query(OrderItem.class);
+        List<OrderItem> items = query
+                .where(OrderItemFields.PRODUCT.PRICE.gt(query.root(), new BigDecimal("500")))
+                .query();
+
+        assertEquals(3, items.size()); // Laptop (999.99) and Phone (599.99) x 2
+    }
+
+    @Test
+    @Order(196)
+    @DisplayName("Nested relation fields - combined with regular fields")
+    void testNestedRelationFieldCombined() {
+        // Query users where department is Engineering AND status is ACTIVE
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.DEPARTMENT.NAME.eq(query.root(), "Engineering"))
+                .and(UserFields.STATUS.eq(query.root(), UserStatus.ACTIVE))
+                .query();
+
+        assertEquals(2, users.size()); // Alice and Bob
+    }
+
+    @Test
+    @Order(197)
+    @DisplayName("Nested relation fields - ordering by nested field")
+    void testNestedRelationFieldOrdering() {
+        // Order users by department name
+        List<User> users = queryFactory.query(User.class)
+                .orderByAsc(UserFields.DEPARTMENT.NAME)
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(4, users.size());
+        // Engineering users first (Alice, Bob), then Marketing (Charlie, Diana)
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+        assertEquals("Charlie", users.get(2).getName());
+        assertEquals("Diana", users.get(3).getName());
+    }
+
+    @Test
+    @Order(198)
+    @DisplayName("Nested relation fields - embedded within relation using USER.ADDRESS_CITY")
+    void testNestedRelationFieldEmbeddedInRelation() {
+        // First add address to a user
+        User alice = queryFactory.query(User.class)
+                .whereEqual(UserFields.NAME, "Alice")
+                .queryOneOrNull();
+        assertNotNull(alice);
+        alice.setAddress(new com.soyesenna.helixquery.entity.Address("123 Main St", "New York", "10001", "USA"));
+        entityManager.flush();
+        entityManager.clear();
+
+        // Query orders where user's address city is "New York"
+        // Using nested field accessor: OrderFields.USER.ADDRESS_CITY
+        List<com.soyesenna.helixquery.entity.Order> orders = queryFactory.query(com.soyesenna.helixquery.entity.Order.class)
+                .whereEqual(OrderFields.USER.ADDRESS_CITY, "New York")
+                .query();
+
+        assertEquals(2, orders.size()); // Alice has 2 orders
+    }
+
+    @Test
+    @Order(199)
+    @DisplayName("Nested relation fields - using $ for join operations")
+    void testNestedRelationFieldJoinWithDollar() {
+        // Use DEPARTMENT.$ for join operations
+        List<User> users = queryFactory.query(User.class)
+                .fetchJoin(UserFields.DEPARTMENT.$)
+                .whereEqual(UserFields.DEPARTMENT.NAME, "Engineering")
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        // Verify department is loaded (no lazy loading exception)
+        for (User user : users) {
+            assertNotNull(user.getDepartment().getName());
+        }
     }
 
     // ==================== Bulk Delete Tests ====================

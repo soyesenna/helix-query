@@ -169,6 +169,7 @@ public class CriteriaContext {
     /**
      * Resolve a path expression to a JPA Path.
      * Handles nested paths by navigating through attributes.
+     * If the path has a relationPath, automatically creates a LEFT JOIN for that relation.
      *
      * @param pathExpr the HelixQuery path expression
      * @return the JPA criteria Path
@@ -177,6 +178,13 @@ public class CriteriaContext {
     public <T> Path<T> resolvePath(PathExpression<T> pathExpr) {
         if (pathExpr.isRoot()) {
             return (Path<T>) root;
+        }
+
+        // Check if this path requires an auto-join
+        String relationPath = pathExpr.getRelationPath();
+        if (relationPath != null && !relationPath.isEmpty()) {
+            // Automatically create a LEFT JOIN for the relation path
+            getOrCreateJoin(relationPath, JoinType.LEFT);
         }
 
         String fullPath = pathExpr.getFullPath();

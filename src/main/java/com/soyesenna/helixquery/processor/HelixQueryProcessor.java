@@ -44,7 +44,7 @@ import com.soyesenna.helixquery.annotations.IgnoreField;
         "jakarta.persistence.Entity",
         "javax.persistence.Entity"
 })
-@SupportedOptions({"HelixQuery.generateRelations", "HelixQuery.includeTransient"})
+@SupportedOptions({"HelixQuery.generateRelations", "HelixQuery.includeTransient", "HelixQuery.relationDepth"})
 public class HelixQueryProcessor extends AbstractProcessor {
 
     private static final Map<String, String> PRIMITIVE_BOXES = Map.of(
@@ -77,6 +77,7 @@ public class HelixQueryProcessor extends AbstractProcessor {
     private final Set<String> generated = new HashSet<>();
     private boolean generateRelations = true;
     private boolean includeTransient = false;
+    private int relationDepth = 1;
 
     @Override
     public synchronized void init(ProcessingEnvironment processingEnv) {
@@ -88,6 +89,7 @@ public class HelixQueryProcessor extends AbstractProcessor {
         Map<String, String> options = processingEnv.getOptions();
         this.generateRelations = Boolean.parseBoolean(options.getOrDefault("HelixQuery.generateRelations", "true"));
         this.includeTransient = Boolean.parseBoolean(options.getOrDefault("HelixQuery.includeTransient", "false"));
+        this.relationDepth = Integer.parseInt(options.getOrDefault("HelixQuery.relationDepth", "1"));
     }
 
     @Override
@@ -367,12 +369,398 @@ public class HelixQueryProcessor extends AbstractProcessor {
         );
     }
 
+    /**
+     * Render a relation field as a nested static class.
+     * This allows chained access like UserFields.DEPARTMENT.NAME
+     *
+     * @param constName  the constant name (e.g., "DEPARTMENT")
+     * @param fieldName  the field name (e.g., "department")
+     * @param type       the relation target type
+     * @param entityType the owning entity type
+     * @return the generated nested class as a string
+     */
     private String renderRelationField(String constName, String fieldName, TypeMirror type, String entityType) {
         String targetType = boxedTypeName(type);
+
+        Element typeElement = types.asElement(type);
+        if (!(typeElement instanceof TypeElement targetEntity)) {
+            // Fallback to simple RelationField if type cannot be resolved
+            return String.format(
+                    "    public static final RelationField<%s> %s = new RelationField<>(\"%s\", %s.class, %s.class);%n",
+                    targetType, constName, fieldName, boxedErasure(type), entityType
+            );
+        }
+
+        // Check if target is an entity
+        if (!isEntity(targetEntity)) {
+            return String.format(
+                    "    public static final RelationField<%s> %s = new RelationField<>(\"%s\", %s.class, %s.class);%n",
+                    targetType, constName, fieldName, boxedErasure(type), entityType
+            );
+        }
+
+        StringBuilder result = new StringBuilder();
+
+        // Generate nested static class
+        result.append(String.format("    /**%n"));
+        result.append(String.format("     * Nested field accessor for %s relation.%n", fieldName));
+        result.append(String.format("     * Use $ for join operations, other fields for queries.%n"));
+        result.append(String.format("     */%n"));
+        result.append(String.format("    public static final class %s {%n", constName));
+        result.append(String.format("        private %s() {}%n%n", constName));
+
+        // Generate $ field for the RelationField itself (used for joins)
+        result.append(String.format(
+                "        /** RelationField for join operations */%n" +
+                "        public static final RelationField<%s> $ = new RelationField<>(\"%s\", %s.class, %s.class);%n%n",
+                targetType, fieldName, boxedErasure(type), entityType
+        ));
+
+        // Generate nested fields from the target entity
+        String nestedFields = renderRelationNestedClassFields(fieldName, type, entityType, new HashSet<>(), 0);
+        result.append(nestedFields);
+
+        result.append("    }\n");
+
+        return result.toString();
+    }
+
+    /**
+     * Render fields inside a relation nested class.
+     *
+     * @param pathPrefix    the field path prefix (e.g., "department")
+     * @param type          the type of the relation field (target entity type)
+     * @param entityType    the owning entity type
+     * @param visitedTypes  set of already visited type names to prevent circular references
+     * @param currentDepth  current recursion depth
+     * @return the generated field constants as a string
+     */
+    private String renderRelationNestedClassFields(String pathPrefix, TypeMirror type,
+            String entityType, Set<String> visitedTypes, int currentDepth) {
+
+        Element typeElement = types.asElement(type);
+        if (!(typeElement instanceof TypeElement targetEntity)) {
+            return "";
+        }
+
+        String targetTypeName = targetEntity.getQualifiedName().toString();
+
+        // Prevent circular references
+        if (visitedTypes.contains(targetTypeName)) {
+            return "";
+        }
+
+        Set<String> newVisitedTypes = new HashSet<>(visitedTypes);
+        newVisitedTypes.add(targetTypeName);
+
+        StringBuilder result = new StringBuilder();
+
+        // The relationPath is the path prefix itself (e.g., "department")
+        // This is used for auto-join when using nested fields
+        String relationPath = pathPrefix;
+
+        // Collect fields from the target entity
+        Set<VariableElement> targetFields = collectEntityFields(targetEntity);
+
+        for (VariableElement targetField : targetFields) {
+            String nestedFieldName = targetField.getSimpleName().toString();
+            String nestedPath = pathPrefix + "." + nestedFieldName;
+            String nestedConstName = toUpperSnake(nestedFieldName);
+            TypeMirror nestedType = targetField.asType();
+
+            FieldCategory nestedCategory = categorizeField(nestedType, targetField);
+
+            String fieldConstant = switch (nestedCategory) {
+                case STRING -> renderNestedStringField(nestedConstName, nestedPath, entityType, relationPath);
+                case NUMBER -> renderNestedNumberField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case DATETIME -> renderNestedDateTimeField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case BOOLEAN -> renderNestedSimpleField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case ENUM -> renderNestedComparableField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case EMBEDDED -> renderNestedEmbeddedFields(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case COMPARABLE -> renderNestedComparableField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case RELATION -> {
+                    // For nested relations, check depth limit
+                    if (currentDepth + 1 < relationDepth) {
+                        yield renderNestedRelationClass(nestedConstName, nestedPath, nestedType, entityType, newVisitedTypes, currentDepth + 1);
+                    } else {
+                        // Just generate a simple RelationField at max depth
+                        String relTargetType = boxedTypeName(nestedType);
+                        yield String.format(
+                                "        public static final RelationField<%s> %s = new RelationField<>(\"%s\", %s.class, %s.class);%n",
+                                relTargetType, nestedConstName, nestedPath, boxedErasure(nestedType), entityType
+                        );
+                    }
+                }
+                case COLLECTION, SIMPLE -> ""; // Skip collections and simple fields within relations
+            };
+
+            if (!fieldConstant.isEmpty()) {
+                result.append(fieldConstant);
+            }
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Render a nested relation as a sub-class within a relation class.
+     */
+    private String renderNestedRelationClass(String constName, String pathPrefix, TypeMirror type,
+            String entityType, Set<String> visitedTypes, int currentDepth) {
+
+        String targetType = boxedTypeName(type);
+
+        Element typeElement = types.asElement(type);
+        if (!(typeElement instanceof TypeElement targetEntity)) {
+            return String.format(
+                    "        public static final RelationField<%s> %s = new RelationField<>(\"%s\", %s.class, %s.class);%n",
+                    targetType, constName, pathPrefix, boxedErasure(type), entityType
+            );
+        }
+
+        if (!isEntity(targetEntity)) {
+            return String.format(
+                    "        public static final RelationField<%s> %s = new RelationField<>(\"%s\", %s.class, %s.class);%n",
+                    targetType, constName, pathPrefix, boxedErasure(type), entityType
+            );
+        }
+
+        StringBuilder result = new StringBuilder();
+
+        // Generate nested static class
+        result.append(String.format("        public static final class %s {%n", constName));
+        result.append(String.format("            private %s() {}%n%n", constName));
+
+        // Generate $ field for the RelationField
+        result.append(String.format(
+                "            public static final RelationField<%s> $ = new RelationField<>(\"%s\", %s.class, %s.class);%n%n",
+                targetType, pathPrefix, boxedErasure(type), entityType
+        ));
+
+        // Generate nested fields (with deeper indentation)
+        String nestedFields = renderDeeperNestedClassFields(pathPrefix, type, entityType, visitedTypes, currentDepth);
+        result.append(nestedFields);
+
+        result.append("        }\n");
+
+        return result.toString();
+    }
+
+    /**
+     * Render fields inside a deeper nested relation class (with extra indentation).
+     * The relationPath is the full path to this nested relation (e.g., "department.manager").
+     */
+    private String renderDeeperNestedClassFields(String pathPrefix, TypeMirror type,
+            String entityType, Set<String> visitedTypes, int currentDepth) {
+
+        Element typeElement = types.asElement(type);
+        if (!(typeElement instanceof TypeElement targetEntity)) {
+            return "";
+        }
+
+        String targetTypeName = targetEntity.getQualifiedName().toString();
+
+        if (visitedTypes.contains(targetTypeName)) {
+            return "";
+        }
+
+        Set<String> newVisitedTypes = new HashSet<>(visitedTypes);
+        newVisitedTypes.add(targetTypeName);
+
+        // The relationPath is the pathPrefix for deeper nested fields
+        String relationPath = pathPrefix;
+
+        StringBuilder result = new StringBuilder();
+        Set<VariableElement> targetFields = collectEntityFields(targetEntity);
+
+        for (VariableElement targetField : targetFields) {
+            String nestedFieldName = targetField.getSimpleName().toString();
+            String nestedPath = pathPrefix + "." + nestedFieldName;
+            String nestedConstName = toUpperSnake(nestedFieldName);
+            TypeMirror nestedType = targetField.asType();
+
+            FieldCategory nestedCategory = categorizeField(nestedType, targetField);
+
+            String fieldConstant = switch (nestedCategory) {
+                case STRING -> String.format(
+                        "            public static final StringField %s = new StringField(\"%s\", %s.class, \"%s\");%n",
+                        nestedConstName, nestedPath, entityType, relationPath);
+                case NUMBER -> {
+                    String valueType = boxedTypeName(nestedType);
+                    yield String.format(
+                            "            public static final NumberField<%s> %s = new NumberField<>(\"%s\", %s.class, %s.class, \"%s\");%n",
+                            valueType, nestedConstName, nestedPath, boxedErasure(nestedType), entityType, relationPath);
+                }
+                case DATETIME -> {
+                    String valueType = boxedTypeName(nestedType);
+                    yield String.format(
+                            "            public static final DateTimeField<%s> %s = new DateTimeField<>(\"%s\", %s.class, %s.class, \"%s\");%n",
+                            valueType, nestedConstName, nestedPath, boxedErasure(nestedType), entityType, relationPath);
+                }
+                case BOOLEAN -> {
+                    String valueType = boxedTypeName(nestedType);
+                    yield String.format(
+                            "            public static final Field<%s> %s = new Field<>(\"%s\", %s.class, %s.class, \"%s\");%n",
+                            valueType, nestedConstName, nestedPath, boxedErasure(nestedType), entityType, relationPath);
+                }
+                case ENUM, COMPARABLE -> {
+                    String valueType = boxedTypeName(nestedType);
+                    yield String.format(
+                            "            public static final ComparableField<%s> %s = new ComparableField<>(\"%s\", %s.class, %s.class, \"%s\");%n",
+                            valueType, nestedConstName, nestedPath, boxedErasure(nestedType), entityType, relationPath);
+                }
+                case RELATION -> {
+                    String relTargetType = boxedTypeName(nestedType);
+                    yield String.format(
+                            "            public static final RelationField<%s> %s = new RelationField<>(\"%s\", %s.class, %s.class);%n",
+                            relTargetType, nestedConstName, nestedPath, boxedErasure(nestedType), entityType);
+                }
+                case EMBEDDED, COLLECTION, SIMPLE -> "";
+            };
+
+            if (!fieldConstant.isEmpty()) {
+                result.append(fieldConstant);
+            }
+        }
+
+        return result.toString();
+    }
+
+    // ==================== Nested class field renderers (8-space indent) ====================
+
+    private String renderNestedStringField(String constName, String path, String entityType, String relationPath) {
         return String.format(
-                "    public static final RelationField<%s> %s = new RelationField<>(\"%s\", %s.class, %s.class);%n",
-                targetType, constName, fieldName, boxedErasure(type), entityType
+                "        public static final StringField %s = new StringField(\"%s\", %s.class, \"%s\");%n",
+                constName, path, entityType, relationPath
         );
+    }
+
+    private String renderNestedNumberField(String constName, String path, TypeMirror type, String entityType, String relationPath) {
+        String valueType = boxedTypeName(type);
+        return String.format(
+                "        public static final NumberField<%s> %s = new NumberField<>(\"%s\", %s.class, %s.class, \"%s\");%n",
+                valueType, constName, path, boxedErasure(type), entityType, relationPath
+        );
+    }
+
+    private String renderNestedDateTimeField(String constName, String path, TypeMirror type, String entityType, String relationPath) {
+        String valueType = boxedTypeName(type);
+        return String.format(
+                "        public static final DateTimeField<%s> %s = new DateTimeField<>(\"%s\", %s.class, %s.class, \"%s\");%n",
+                valueType, constName, path, boxedErasure(type), entityType, relationPath
+        );
+    }
+
+    private String renderNestedComparableField(String constName, String path, TypeMirror type, String entityType, String relationPath) {
+        String valueType = boxedTypeName(type);
+        return String.format(
+                "        public static final ComparableField<%s> %s = new ComparableField<>(\"%s\", %s.class, %s.class, \"%s\");%n",
+                valueType, constName, path, boxedErasure(type), entityType, relationPath
+        );
+    }
+
+    private String renderNestedSimpleField(String constName, String path, TypeMirror type, String entityType, String relationPath) {
+        String valueType = boxedTypeName(type);
+        return String.format(
+                "        public static final Field<%s> %s = new Field<>(\"%s\", %s.class, %s.class, \"%s\");%n",
+                valueType, constName, path, boxedErasure(type), entityType, relationPath
+        );
+    }
+
+    /**
+     * Render embedded fields inside a nested relation class.
+     *
+     * @param constPrefix   the constant name prefix
+     * @param pathPrefix    the field path prefix
+     * @param type          the embedded type
+     * @param entityType    the owning entity type
+     * @param relationPath  the relation path for auto-join
+     */
+    private String renderNestedEmbeddedFields(String constPrefix, String pathPrefix, TypeMirror type, String entityType, String relationPath) {
+        Element typeElement = types.asElement(type);
+        if (!(typeElement instanceof TypeElement embeddableType)) {
+            return "";
+        }
+
+        StringBuilder result = new StringBuilder();
+        result.append(String.format("        // Embedded fields from %s%n", embeddableType.getSimpleName()));
+
+        Set<VariableElement> embeddedFields = collectEmbeddableFields(embeddableType);
+
+        for (VariableElement embeddedField : embeddedFields) {
+            String nestedFieldName = embeddedField.getSimpleName().toString();
+            String nestedPath = pathPrefix + "." + nestedFieldName;
+            String nestedConstName = constPrefix + "_" + toUpperSnake(nestedFieldName);
+            TypeMirror nestedType = embeddedField.asType();
+
+            FieldCategory nestedCategory = categorizeField(nestedType, embeddedField);
+
+            String fieldConstant = switch (nestedCategory) {
+                case STRING -> renderNestedStringField(nestedConstName, nestedPath, entityType, relationPath);
+                case NUMBER -> renderNestedNumberField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case DATETIME -> renderNestedDateTimeField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case BOOLEAN -> renderNestedSimpleField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case ENUM, COMPARABLE -> renderNestedComparableField(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case EMBEDDED -> renderNestedEmbeddedFields(nestedConstName, nestedPath, nestedType, entityType, relationPath);
+                case COLLECTION, RELATION, SIMPLE -> "";
+            };
+
+            if (!fieldConstant.isEmpty()) {
+                result.append(fieldConstant);
+            }
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Check if a TypeElement is an entity (has @Entity annotation).
+     */
+    private boolean isEntity(TypeElement typeElement) {
+        return hasAnyAnnotation(typeElement, "jakarta.persistence.Entity", "javax.persistence.Entity");
+    }
+
+    /**
+     * Collect fields from an entity, excluding back-references and collections.
+     * This is used for flattening relation fields.
+     */
+    private Set<VariableElement> collectEntityFields(TypeElement entity) {
+        Map<String, VariableElement> fieldsByName = new LinkedHashMap<>();
+        for (TypeElement type : getTypeHierarchy(entity)) {
+            type.getEnclosedElements().stream()
+                    .filter(e -> e.getKind() == ElementKind.FIELD)
+                    .map(e -> (VariableElement) e)
+                    .filter(this::isRelationNestedFieldProcessable)
+                    .forEach(field -> fieldsByName.put(field.getSimpleName().toString(), field));
+        }
+        return new LinkedHashSet<>(fieldsByName.values());
+    }
+
+    /**
+     * Check if a field from a related entity should be processed for flattening.
+     * Excludes static, transient, collections, and back-reference fields.
+     */
+    private boolean isRelationNestedFieldProcessable(VariableElement field) {
+        if (field.getAnnotation(IgnoreField.class) != null) {
+            return false;
+        }
+        Set<Modifier> modifiers = field.getModifiers();
+        if (modifiers.contains(Modifier.STATIC) || modifiers.contains(Modifier.FINAL)) {
+            return false;
+        }
+        if (modifiers.contains(Modifier.TRANSIENT)) {
+            return false;
+        }
+        if (!includeTransient && hasAnyAnnotation(field, "jakarta.persistence.Transient", "javax.persistence.Transient")) {
+            return false;
+        }
+        // Skip OneToMany and ManyToMany collections (back-references)
+        if (hasAnyAnnotation(field,
+                "jakarta.persistence.OneToMany", "javax.persistence.OneToMany",
+                "jakarta.persistence.ManyToMany", "javax.persistence.ManyToMany")) {
+            return false;
+        }
+        return true;
     }
 
     /**

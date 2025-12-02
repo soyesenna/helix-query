@@ -27,6 +27,17 @@ public interface HelixField<T> {
     Class<?> entityType();
 
     /**
+     * Get the relation path for auto-join.
+     * When this field is accessed through a relation (e.g., "department.name"),
+     * returns the relation path ("department") that should be automatically joined.
+     *
+     * @return the relation path to auto-join, or null if not a relation field
+     */
+    default String relationPath() {
+        return null;
+    }
+
+    /**
      * Get a path expression for this field.
      *
      * @param root the root path expression

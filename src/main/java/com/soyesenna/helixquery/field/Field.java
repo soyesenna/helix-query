@@ -18,13 +18,30 @@ import java.util.Objects;
 public record Field<T>(
         String name,
         Class<T> type,
-        Class<?> entityType
+        Class<?> entityType,
+        String relationPath
 ) implements HelixField<T> {
 
+    /**
+     * Canonical constructor with all parameters.
+     */
     public Field {
         Objects.requireNonNull(name, "name must not be null");
         Objects.requireNonNull(type, "type must not be null");
         Objects.requireNonNull(entityType, "entityType must not be null");
+        // relationPath can be null
+    }
+
+    /**
+     * Constructor without relationPath (for regular fields).
+     */
+    public Field(String name, Class<T> type, Class<?> entityType) {
+        this(name, type, entityType, null);
+    }
+
+    @Override
+    public String relationPath() {
+        return relationPath;
     }
 
     // ==================== Path Access ====================
@@ -36,7 +53,7 @@ public record Field<T>(
      * @return a path expression for this field
      */
     public PathExpression<T> path(PathExpression<?> root) {
-        return new PathExpression<>(type, name, root);
+        return new PathExpression<>(type, name, root, relationPath);
     }
 
     // ==================== Equality Predicates ====================
