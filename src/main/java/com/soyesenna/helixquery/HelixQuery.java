@@ -167,6 +167,66 @@ public class HelixQuery<T> {
     }
 
     /**
+     * Add greater-than-or-equal condition: field >= value
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> whereGreaterThanOrEqual(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.ge(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add greater-than-or-equal condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> whereGreaterThanOrEqual(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.ge(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add less-than-or-equal condition: field <= value
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> whereLessThanOrEqual(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.le(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add less-than-or-equal condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> whereLessThanOrEqual(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.le(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add greater-than-or-equal condition for datetime fields: field >= value
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> whereGreaterThanOrEqual(DateTimeField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.onOrAfter(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add less-than-or-equal condition for datetime fields: field <= value
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> whereLessThanOrEqual(DateTimeField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.onOrBefore(root, value));
+        }
+        return this;
+    }
+
+    /**
      * Add LIKE condition: field LIKE pattern
      */
     public HelixQuery<T> whereLike(StringField field, String pattern) {
@@ -190,6 +250,26 @@ public class HelixQuery<T> {
      * Add IN condition: field IN (values)
      */
     public <V> HelixQuery<T> whereIn(Field<V> field, Collection<? extends V> values) {
+        if (values != null && !values.isEmpty()) {
+            predicateBuilder.and(field.in(root, values));
+        }
+        return this;
+    }
+
+    /**
+     * Add IN condition for string fields: field IN (values)
+     */
+    public HelixQuery<T> whereIn(StringField field, Collection<String> values) {
+        if (values != null && !values.isEmpty()) {
+            predicateBuilder.and(field.in(root, values));
+        }
+        return this;
+    }
+
+    /**
+     * Add IN condition for number fields: field IN (values)
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> whereIn(NumberField<V> field, Collection<? extends V> values) {
         if (values != null && !values.isEmpty()) {
             predicateBuilder.and(field.in(root, values));
         }
@@ -1075,6 +1155,119 @@ public class HelixQuery<T> {
         applyPagination(typedQuery);
 
         return typedQuery.getResultList();
+    }
+
+    // ==================== EXECUTION - GROUP BY COUNT ====================
+
+    /**
+     * Execute a GROUP BY query and return counts per group as a Map.
+     * Generates: SELECT field, COUNT(*) FROM entity WHERE ... GROUP BY field
+     *
+     * <pre>{@code
+     * // Count users by status
+     * Map<UserStatus, Long> statusCounts = queryFactory.query(User.class)
+     *     .groupByCount(UserFields.STATUS);
+     *
+     * // Count with additional conditions
+     * Map<UserStatus, Long> activeCounts = queryFactory.query(User.class)
+     *     .whereEqual(UserFields.ACTIVE, true)
+     *     .groupByCount(UserFields.STATUS);
+     * }</pre>
+     *
+     * @param field the field to group by
+     * @param <V>   the field value type
+     * @return a Map where keys are field values and values are counts
+     */
+    public <V> Map<V, Long> groupByCount(Field<V> field) {
+        return executeGroupByCount(field.path(root), field.type());
+    }
+
+    /**
+     * Execute a GROUP BY query for StringField and return counts per group.
+     *
+     * <pre>{@code
+     * Map<String, Long> categoryCounts = queryFactory.query(Product.class)
+     *     .groupByCount(ProductFields.CATEGORY);
+     * }</pre>
+     *
+     * @param field the string field to group by
+     * @return a Map where keys are string values and values are counts
+     */
+    public Map<String, Long> groupByCount(StringField field) {
+        return executeGroupByCount(field.path(root), String.class);
+    }
+
+    /**
+     * Execute a GROUP BY query for NumberField and return counts per group.
+     *
+     * <pre>{@code
+     * Map<Integer, Long> priceTierCounts = queryFactory.query(Product.class)
+     *     .groupByCount(ProductFields.PRICE_TIER);
+     * }</pre>
+     *
+     * @param field the number field to group by
+     * @param <V>   the number type
+     * @return a Map where keys are number values and values are counts
+     */
+    public <V extends Number & Comparable<V>> Map<V, Long> groupByCount(NumberField<V> field) {
+        return executeGroupByCount(field.path(root), field.type());
+    }
+
+    /**
+     * Execute a GROUP BY query for ComparableField and return counts per group.
+     *
+     * <pre>{@code
+     * Map<Priority, Long> priorityCounts = queryFactory.query(Task.class)
+     *     .groupByCount(TaskFields.PRIORITY);
+     * }</pre>
+     *
+     * @param field the comparable field to group by
+     * @param <V>   the comparable type
+     * @return a Map where keys are field values and values are counts
+     */
+    public <V extends Comparable<? super V>> Map<V, Long> groupByCount(ComparableField<V> field) {
+        return executeGroupByCount(field.path(root), field.type());
+    }
+
+    /**
+     * Internal method to execute GROUP BY COUNT query.
+     */
+    @SuppressWarnings("unchecked")
+    private <V> Map<V, Long> executeGroupByCount(com.soyesenna.helixquery.expression.Expression<V> fieldExpr, Class<V> fieldType) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Tuple> cq = cb.createTupleQuery();
+        Root<T> criteriaRoot = cq.from(entityClass);
+
+        CriteriaContext ctx = new CriteriaContext(cb, criteriaRoot, cq);
+        CriteriaExpressionVisitor visitor = new CriteriaExpressionVisitor();
+
+        applyJoins(ctx, criteriaRoot);
+
+        // Compile the field expression
+        jakarta.persistence.criteria.Expression<V> fieldPath =
+                (jakarta.persistence.criteria.Expression<V>) visitor.compile(fieldExpr, ctx);
+
+        // SELECT field, COUNT(*)
+        cq.multiselect(fieldPath.alias("groupKey"), cb.count(criteriaRoot).alias("cnt"));
+
+        // GROUP BY field
+        cq.groupBy(fieldPath);
+
+        // Apply WHERE clause
+        applyWhereClause(ctx, visitor, cq);
+
+        // Execute query
+        List<Tuple> results = entityManager.createQuery(cq).getResultList();
+
+        // Convert to Map
+        Map<V, Long> resultMap = new LinkedHashMap<>();
+        for (Tuple tuple : results) {
+            V key = tuple.get("groupKey", fieldType);
+            Long count = tuple.get("cnt", Long.class);
+            resultMap.put(key, count);
+        }
+
+        return resultMap;
     }
 
     // ==================== Internal Build Methods ====================
