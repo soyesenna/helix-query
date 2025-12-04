@@ -813,7 +813,9 @@ public class HelixQuery<T> {
         countQuery.select(distinct ? cb.countDistinct(countRoot) : cb.count(countRoot));
 
         CriteriaContext ctx = new CriteriaContext(cb, countRoot, countQuery);
-        applyJoins(ctx, countRoot);
+        // Use applyJoinsForCount to exclude fetch joins from count query
+        // Fetch joins cause SemanticException in Hibernate 6+ when owner is not in select list
+        applyJoinsForCount(ctx, countRoot);
 
         if (predicateBuilder.hasValue()) {
             CriteriaExpressionVisitor visitor = new CriteriaExpressionVisitor();
@@ -1319,6 +1321,19 @@ public class HelixQuery<T> {
             } else {
                 ctx.getOrCreateJoin(joinSpec.attribute(), joinSpec.type());
             }
+        }
+    }
+
+    /**
+     * Apply joins for count query - converts fetch joins to regular joins.
+     * Count queries should not include fetch joins because they only select COUNT(*),
+     * not the entity itself. Hibernate 6+ throws SemanticException when fetch joins
+     * are used in queries where the owner entity is not in the select list.
+     */
+    private void applyJoinsForCount(CriteriaContext ctx, Root<T> criteriaRoot) {
+        for (JoinSpec joinSpec : joins) {
+            // Convert all joins (including fetch) to regular joins for count query
+            ctx.getOrCreateJoin(joinSpec.attribute(), joinSpec.type());
         }
     }
 

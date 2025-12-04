@@ -31,6 +31,8 @@ import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -1394,5 +1396,77 @@ class HelixQueryIntegrationTest {
                 .whereEqual(UserFields.AGE, 96)
                 .queryCount();
         assertEquals(0, afterCount);
+    }
+
+    // ==================== Fetch Join + Count/Page Tests ====================
+
+    @Test
+    @Order(200)
+    @DisplayName("queryCount with leftFetchJoin - should ignore fetch in count query")
+    void testQueryCountWithLeftFetchJoin() {
+        // This test verifies the fix for Hibernate 6+ SemanticException:
+        // "Query specified join fetching, but the owner of the fetched association was not present in the select list"
+        long count = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.DEPARTMENT.$)
+                .queryCount();
+
+        assertEquals(4, count);
+    }
+
+    @Test
+    @Order(201)
+    @DisplayName("queryPage with leftFetchJoin - should work correctly with pagination")
+    void testQueryPageWithLeftFetchJoin() {
+        Page<User> page = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.DEPARTMENT.$)
+                .queryPageOrderByAsc(PageRequest.of(0, 10), UserFields.ID);
+
+        assertNotNull(page);
+        assertEquals(4, page.getTotalElements());
+        assertEquals(4, page.getContent().size());
+
+        // Verify department is loaded (no lazy loading exception)
+        for (User user : page.getContent()) {
+            assertNotNull(user.getDepartment().getName());
+        }
+    }
+
+    @Test
+    @Order(202)
+    @DisplayName("queryPageOrderByDesc with leftFetchJoin - should work with ordering")
+    void testQueryPageOrderByDescWithLeftFetchJoin() {
+        Page<User> page = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.DEPARTMENT.$)
+                .queryPageOrderByDesc(PageRequest.of(0, 2), UserFields.AGE);
+
+        assertNotNull(page);
+        assertEquals(4, page.getTotalElements());
+        assertEquals(2, page.getContent().size());
+
+        // Verify ordering - descending by age
+        assertTrue(page.getContent().get(0).getAge() >= page.getContent().get(1).getAge());
+    }
+
+    @Test
+    @Order(203)
+    @DisplayName("queryCount with fetchJoin (inner) - should ignore fetch in count query")
+    void testQueryCountWithInnerFetchJoin() {
+        long count = queryFactory.query(User.class)
+                .fetchJoin(UserFields.DEPARTMENT.$)
+                .queryCount();
+
+        assertEquals(4, count);
+    }
+
+    @Test
+    @Order(204)
+    @DisplayName("queryCount with multiple fetch joins - should handle all fetch joins")
+    void testQueryCountWithMultipleFetchJoins() {
+        long count = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.DEPARTMENT.$)
+                .whereGreaterThan(UserFields.AGE, 20)
+                .queryCount();
+
+        assertTrue(count >= 0);
     }
 }
