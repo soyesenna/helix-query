@@ -3,6 +3,7 @@ package com.soyesenna.helixquery.field;
 import com.soyesenna.helixquery.expression.PathExpression;
 import com.soyesenna.helixquery.expression.PredicateExpression;
 
+import java.util.Collection;
 import java.util.Objects;
 
 /**
@@ -102,6 +103,39 @@ public record ComparableField<T extends Comparable<? super T>>(
         Objects.requireNonNull(from, "from must not be null for between");
         Objects.requireNonNull(to, "to must not be null for between");
         return PredicateExpression.between(path(root), from, to);
+    }
+
+    // ==================== Collection Predicates ====================
+
+    /**
+     * Create an IN predicate: field IN (values)
+     */
+    public PredicateExpression in(PathExpression<?> root, Collection<? extends T> values) {
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        return PredicateExpression.in(path(root), values);
+    }
+
+    /**
+     * Create an IN predicate: field IN (values)
+     */
+    @SafeVarargs
+    public final PredicateExpression in(PathExpression<?> root, T... values) {
+        if (values == null || values.length == 0) {
+            return null;
+        }
+        return PredicateExpression.in(path(root), values);
+    }
+
+    /**
+     * Create a NOT IN predicate: field NOT IN (values)
+     */
+    public PredicateExpression notIn(PathExpression<?> root, Collection<? extends T> values) {
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        return PredicateExpression.notIn(path(root), values);
     }
 
     // ==================== Null Predicates ====================

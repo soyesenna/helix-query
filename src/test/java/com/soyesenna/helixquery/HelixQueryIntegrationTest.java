@@ -469,10 +469,155 @@ class HelixQueryIntegrationTest {
         assertEquals(3, users.size()); // Alice, Bob, Diana
     }
 
-    // ==================== RelationField Tests ====================
+    @Test
+    @Order(43)
+    @DisplayName("ComparableField.in() - enum in collection")
+    void testComparableFieldEnumInCollection() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.STATUS.in(query.root(), Arrays.asList(UserStatus.ACTIVE, UserStatus.PENDING)))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(3, users.size()); // Alice, Bob (ACTIVE), Diana (PENDING)
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+        assertEquals("Diana", users.get(2).getName());
+    }
+
+    @Test
+    @Order(44)
+    @DisplayName("ComparableField.in() - enum in varargs")
+    void testComparableFieldEnumInVarargs() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.STATUS.in(query.root(), UserStatus.INACTIVE, UserStatus.SUSPENDED))
+                .query();
+
+        assertEquals(1, users.size()); // Only Charlie (INACTIVE), no one is SUSPENDED
+        assertEquals("Charlie", users.get(0).getName());
+    }
+
+    @Test
+    @Order(45)
+    @DisplayName("ComparableField.in() - single value in collection")
+    void testComparableFieldEnumInSingleValue() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.STATUS.in(query.root(), Arrays.asList(UserStatus.PENDING)))
+                .query();
+
+        assertEquals(1, users.size()); // Only Diana (PENDING)
+        assertEquals("Diana", users.get(0).getName());
+    }
+
+    @Test
+    @Order(46)
+    @DisplayName("ComparableField.in() - empty collection returns null predicate")
+    void testComparableFieldEnumInEmptyCollection() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+        PredicateExpression predicate = UserFields.STATUS.in(query.root(), Arrays.asList());
+
+        assertNull(predicate); // Empty collection should return null
+    }
+
+    @Test
+    @Order(47)
+    @DisplayName("ComparableField.in() - null collection returns null predicate")
+    void testComparableFieldEnumInNullCollection() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+        PredicateExpression predicate = UserFields.STATUS.in(query.root(), (java.util.Collection<UserStatus>) null);
+
+        assertNull(predicate); // Null collection should return null
+    }
+
+    @Test
+    @Order(48)
+    @DisplayName("ComparableField.notIn() - enum not in collection")
+    void testComparableFieldEnumNotInCollection() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.STATUS.notIn(query.root(), Arrays.asList(UserStatus.ACTIVE)))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size()); // Charlie (INACTIVE), Diana (PENDING)
+        assertEquals("Charlie", users.get(0).getName());
+        assertEquals("Diana", users.get(1).getName());
+    }
+
+    @Test
+    @Order(49)
+    @DisplayName("HelixQuery.whereIn(ComparableField) - fluent API with collection")
+    void testWhereInComparableField() {
+        List<User> users = queryFactory.query(User.class)
+                .whereIn(UserFields.STATUS, Arrays.asList(UserStatus.ACTIVE, UserStatus.INACTIVE))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(3, users.size()); // Alice, Bob (ACTIVE), Charlie (INACTIVE)
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+        assertEquals("Charlie", users.get(2).getName());
+    }
 
     @Test
     @Order(50)
+    @DisplayName("HelixQuery.whereIn(ComparableField) - null collection is ignored")
+    void testWhereInComparableFieldNullCollection() {
+        // Null collection should be ignored (no filter applied)
+        List<User> users = queryFactory.query(User.class)
+                .whereIn(UserFields.STATUS, null)
+                .query();
+
+        assertEquals(4, users.size()); // All users returned
+    }
+
+    @Test
+    @Order(51)
+    @DisplayName("HelixQuery.whereIn(ComparableField) - empty collection is ignored")
+    void testWhereInComparableFieldEmptyCollection() {
+        // Empty collection should be ignored (no filter applied)
+        List<User> users = queryFactory.query(User.class)
+                .whereIn(UserFields.STATUS, Arrays.asList())
+                .query();
+
+        assertEquals(4, users.size()); // All users returned
+    }
+
+    @Test
+    @Order(52)
+    @DisplayName("ComparableField.in() - combined with other predicates")
+    void testComparableFieldEnumInCombinedWithOtherPredicates() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.STATUS.in(query.root(), Arrays.asList(UserStatus.ACTIVE, UserStatus.PENDING)))
+                .and(UserFields.AGE.gt(query.root(), 26))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size()); // Alice (30, ACTIVE), Diana (28, PENDING)
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Diana", users.get(1).getName());
+    }
+
+    @Test
+    @Order(53)
+    @DisplayName("HelixQuery.whereIn(ComparableField) - combined with other whereIn conditions")
+    void testWhereInComparableFieldCombinedWithOtherWhereIn() {
+        List<User> users = queryFactory.query(User.class)
+                .whereIn(UserFields.STATUS, Arrays.asList(UserStatus.ACTIVE))
+                .whereIn(UserFields.NAME, Arrays.asList("Alice", "Charlie"))
+                .query();
+
+        assertEquals(1, users.size()); // Only Alice (ACTIVE and name matches)
+        assertEquals("Alice", users.get(0).getName());
+    }
+
+    // ==================== RelationField Tests ====================
+
+    @Test
+    @Order(55)
     @DisplayName("RelationField.join() - inner join on relation")
     void testRelationFieldJoin() {
         HelixQuery<User> query = queryFactory.query(User.class);
@@ -484,7 +629,7 @@ class HelixQueryIntegrationTest {
     }
 
     @Test
-    @Order(51)
+    @Order(56)
     @DisplayName("RelationField.fetchJoin() - fetch join to avoid N+1")
     void testRelationFieldFetchJoin() {
         HelixQuery<User> query = queryFactory.query(User.class);
@@ -1468,5 +1613,63 @@ class HelixQueryIntegrationTest {
                 .queryCount();
 
         assertTrue(count >= 0);
+    }
+
+    // ==================== Fetch Join + Order By Nested Relation Field Tests ====================
+
+    @Test
+    @Order(210)
+    @DisplayName("leftFetchJoin with orderBy nested relation field - should reuse the fetched join")
+    void testLeftFetchJoinWithOrderByNestedRelationField() {
+        // This test verifies the fix for the bug where:
+        // leftFetchJoin(RELATION.$) + queryPageOrderByDesc(..., RELATION.ID)
+        // would create duplicate joins causing MySQL error:
+        // "Expression #1 of ORDER BY clause is not in SELECT list... this is incompatible with DISTINCT"
+        Page<User> page = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.DEPARTMENT.$)
+                .queryPageOrderByDesc(PageRequest.of(0, 10), UserFields.DEPARTMENT.ID);
+
+        assertNotNull(page);
+        assertEquals(4, page.getTotalElements());
+        assertEquals(4, page.getContent().size());
+
+        // Verify department is loaded (no lazy loading exception)
+        for (User user : page.getContent()) {
+            assertNotNull(user.getDepartment().getName());
+        }
+    }
+
+    @Test
+    @Order(211)
+    @DisplayName("leftFetchJoinDistinct with orderBy nested relation field - critical scenario")
+    void testLeftFetchJoinDistinctWithOrderByNestedRelationField() {
+        // This is the exact scenario from the bug report:
+        // leftFetchJoin + leftFetchJoinDistinct + queryPageOrderByDesc with nested relation field
+        // The DISTINCT + ORDER BY combination triggers MySQL validation
+        Page<User> page = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.DEPARTMENT.$)
+                .leftFetchJoinDistinct(UserFields.ORDERS)
+                .queryPageOrderByDesc(PageRequest.of(0, 10), UserFields.DEPARTMENT.ID);
+
+        assertNotNull(page);
+        // Should not throw: "Expression #1 of ORDER BY clause is not in SELECT list"
+    }
+
+    @Test
+    @Order(212)
+    @DisplayName("leftFetchJoin with orderByAsc nested relation string field")
+    void testLeftFetchJoinWithOrderByNestedStringField() {
+        Page<User> page = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.DEPARTMENT.$)
+                .queryPageOrderByAsc(PageRequest.of(0, 10), UserFields.DEPARTMENT.NAME);
+
+        assertNotNull(page);
+        assertEquals(4, page.getTotalElements());
+
+        // Verify ordering - should be sorted by department name ascending
+        List<User> users = page.getContent();
+        assertEquals(4, users.size());
+        // Engineering comes before Marketing alphabetically
+        assertEquals("Engineering", users.get(0).getDepartment().getName());
     }
 }

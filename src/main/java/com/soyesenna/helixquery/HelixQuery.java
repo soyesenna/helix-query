@@ -277,6 +277,16 @@ public class HelixQuery<T> {
     }
 
     /**
+     * Add IN condition for comparable fields: field IN (values)
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> whereIn(ComparableField<V> field, Collection<? extends V> values) {
+        if (values != null && !values.isEmpty()) {
+            predicateBuilder.and(field.in(root, values));
+        }
+        return this;
+    }
+
+    /**
      * Add before-now condition for DateTime fields: field < now()
      */
     public HelixQuery<T> whereBeforeNow(DateTimeField<LocalDateTime> field) {

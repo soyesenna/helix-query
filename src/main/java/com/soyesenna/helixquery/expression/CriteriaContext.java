@@ -169,7 +169,8 @@ public class CriteriaContext {
     /**
      * Resolve a path expression to a JPA Path.
      * Handles nested paths by navigating through attributes.
-     * If the path has a relationPath, automatically creates a LEFT JOIN for that relation.
+     * If the path has a relationPath, automatically creates a LEFT JOIN for that relation,
+     * unless a fetch join already exists for that path (to avoid duplicate joins).
      *
      * @param pathExpr the HelixQuery path expression
      * @return the JPA criteria Path
@@ -183,8 +184,20 @@ public class CriteriaContext {
         // Check if this path requires an auto-join
         String relationPath = pathExpr.getRelationPath();
         if (relationPath != null && !relationPath.isEmpty()) {
-            // Automatically create a LEFT JOIN for the relation path
-            getOrCreateJoin(relationPath, JoinType.LEFT);
+            // Only create auto-join if there's no existing fetch or join for this path
+            // This prevents duplicate joins when using fetch join + ORDER BY on fetched relation field
+            if (!fetches.containsKey(relationPath) && !joins.containsKey(relationPath)) {
+                getOrCreateJoin(relationPath, JoinType.LEFT);
+            }
+            // If fetch exists but no join, try to use fetch as join (Hibernate supports this)
+            // This ensures ORDER BY uses the joined table column instead of FK column
+            else if (fetches.containsKey(relationPath) && !joins.containsKey(relationPath)) {
+                Fetch<?, ?> fetch = fetches.get(relationPath);
+                // In Hibernate, Fetch is also a Join, so we can cast it
+                if (fetch instanceof Join<?, ?>) {
+                    joins.put(relationPath, (Join<?, ?>) fetch);
+                }
+            }
         }
 
         String fullPath = pathExpr.getFullPath();
