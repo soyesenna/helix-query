@@ -107,6 +107,110 @@ public class HelixQuery<T> {
         return this;
     }
 
+    // ==================== Complex Condition Utilities ====================
+
+    /**
+     * Add a WHERE condition that combines multiple predicates with OR.
+     * Useful for complex OR conditions in a single call.
+     *
+     * <pre>{@code
+     * // Find users with ACTIVE or PENDING status
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereAnyOf(
+     *         UserFields.STATUS.eq(root(), UserStatus.ACTIVE),
+     *         UserFields.STATUS.eq(root(), UserStatus.PENDING)
+     *     )
+     *     .query();
+     * }</pre>
+     *
+     * @param predicates the predicates to combine with OR
+     * @return this query for chaining
+     */
+    public HelixQuery<T> whereAnyOf(PredicateExpression... predicates) {
+        PredicateExpression combined = PredicateExpression.or(predicates);
+        if (combined != null) {
+            predicateBuilder.and(combined);
+        }
+        return this;
+    }
+
+    /**
+     * Add a WHERE condition that combines multiple predicates with AND.
+     * Useful for grouping AND conditions explicitly.
+     *
+     * <pre>{@code
+     * // Find users where (status = ACTIVE AND age > 18)
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereAllOf(
+     *         UserFields.STATUS.eq(root(), UserStatus.ACTIVE),
+     *         UserFields.AGE.gt(root(), 18)
+     *     )
+     *     .query();
+     * }</pre>
+     *
+     * @param predicates the predicates to combine with AND
+     * @return this query for chaining
+     */
+    public HelixQuery<T> whereAllOf(PredicateExpression... predicates) {
+        PredicateExpression combined = PredicateExpression.and(predicates);
+        if (combined != null) {
+            predicateBuilder.and(combined);
+        }
+        return this;
+    }
+
+    /**
+     * Add a complex WHERE condition using a builder pattern.
+     * Allows building nested AND/OR conditions.
+     *
+     * <pre>{@code
+     * // Find users where status = ACTIVE AND (role = ADMIN OR role = MANAGER)
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereEqual(UserFields.STATUS, UserStatus.ACTIVE)
+     *     .whereGroup(group -> group
+     *         .or(UserFields.ROLE.eq(root(), Role.ADMIN))
+     *         .or(UserFields.ROLE.eq(root(), Role.MANAGER)))
+     *     .query();
+     * }</pre>
+     *
+     * @param groupBuilder consumer to build the nested predicate group
+     * @return this query for chaining
+     */
+    public HelixQuery<T> whereGroup(Consumer<PredicateBuilder> groupBuilder) {
+        PredicateBuilder nested = new PredicateBuilder();
+        groupBuilder.accept(nested);
+        if (nested.hasValue()) {
+            predicateBuilder.and(nested.build());
+        }
+        return this;
+    }
+
+    /**
+     * Add an OR condition using a builder pattern.
+     * Adds the built group with OR to the existing conditions.
+     *
+     * <pre>{@code
+     * // Find users where name = 'John' OR (status = ACTIVE AND age > 18)
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereEqual(UserFields.NAME, "John")
+     *     .orGroup(group -> group
+     *         .and(UserFields.STATUS.eq(root(), UserStatus.ACTIVE))
+     *         .and(UserFields.AGE.gt(root(), 18)))
+     *     .query();
+     * }</pre>
+     *
+     * @param groupBuilder consumer to build the nested predicate group
+     * @return this query for chaining
+     */
+    public HelixQuery<T> orGroup(Consumer<PredicateBuilder> groupBuilder) {
+        PredicateBuilder nested = new PredicateBuilder();
+        groupBuilder.accept(nested);
+        if (nested.hasValue()) {
+            predicateBuilder.or(nested.build());
+        }
+        return this;
+    }
+
     // ==================== Field-Based WHERE Conditions ====================
 
     /**
@@ -377,6 +481,260 @@ public class HelixQuery<T> {
      */
     public HelixQuery<T> whereAfterNow(DateTimeField<LocalDateTime> field) {
         predicateBuilder.and(field.afterNow(root));
+        return this;
+    }
+
+    // ==================== Field-Based OR Conditions ====================
+
+    /**
+     * Add OR equality condition using unified HelixField interface.
+     * This method works with all field types.
+     *
+     * <pre>{@code
+     * // Find users with name 'John' OR status ACTIVE
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereEqual(UserFields.NAME, "John")
+     *     .orEqual(UserFields.STATUS, UserStatus.ACTIVE)
+     *     .query();
+     * }</pre>
+     *
+     * @param field the field to compare
+     * @param value the value to match
+     * @param <V>   the field value type
+     * @return this query for chaining
+     */
+    public <V> HelixQuery<T> orEqual(HelixField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.eq(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR greater-than condition: field > value
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> orGreaterThan(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.gt(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR greater-than condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> orGreaterThan(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.gt(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR less-than condition: field < value
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> orLessThan(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.lt(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR less-than condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> orLessThan(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.lt(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR greater-than-or-equal condition: field >= value
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> orGreaterThanOrEqual(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.ge(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR greater-than-or-equal condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> orGreaterThanOrEqual(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.ge(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR less-than-or-equal condition: field <= value
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> orLessThanOrEqual(ComparableField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.le(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR less-than-or-equal condition for number fields.
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> orLessThanOrEqual(NumberField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.le(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR greater-than-or-equal condition for datetime fields: field >= value
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> orGreaterThanOrEqual(DateTimeField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.onOrAfter(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR less-than-or-equal condition for datetime fields: field <= value
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> orLessThanOrEqual(DateTimeField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.onOrBefore(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR LIKE condition: field LIKE pattern
+     */
+    public HelixQuery<T> orLike(StringField field, String pattern) {
+        if (pattern != null) {
+            predicateBuilder.or(field.like(root, pattern));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR contains condition: field LIKE '%value%'
+     */
+    public HelixQuery<T> orContains(StringField field, String value) {
+        if (value != null && !value.isEmpty()) {
+            predicateBuilder.or(field.contains(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR IN condition: field IN (values)
+     */
+    public <V> HelixQuery<T> orIn(Field<V> field, Collection<? extends V> values) {
+        if (values != null && !values.isEmpty()) {
+            predicateBuilder.or(field.in(root, values));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR IN condition for string fields: field IN (values)
+     */
+    public HelixQuery<T> orIn(StringField field, Collection<String> values) {
+        if (values != null && !values.isEmpty()) {
+            predicateBuilder.or(field.in(root, values));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR IN condition for number fields: field IN (values)
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> orIn(NumberField<V> field, Collection<? extends V> values) {
+        if (values != null && !values.isEmpty()) {
+            predicateBuilder.or(field.in(root, values));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR IN condition for comparable fields: field IN (values)
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> orIn(ComparableField<V> field, Collection<? extends V> values) {
+        if (values != null && !values.isEmpty()) {
+            predicateBuilder.or(field.in(root, values));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR IS NULL condition.
+     *
+     * <pre>{@code
+     * // Find users with name 'John' OR department is null
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereEqual(UserFields.NAME, "John")
+     *     .orIsNull(UserFields.DEPARTMENT)
+     *     .query();
+     * }</pre>
+     *
+     * @param field the field to check for null
+     * @return this query for chaining
+     */
+    public HelixQuery<T> orIsNull(HelixField<?> field) {
+        predicateBuilder.or(field.isNull(root));
+        return this;
+    }
+
+    /**
+     * Add OR IS NOT NULL condition.
+     *
+     * @param field the field to check for not null
+     * @return this query for chaining
+     */
+    public HelixQuery<T> orIsNotNull(HelixField<?> field) {
+        predicateBuilder.or(field.isNotNull(root));
+        return this;
+    }
+
+    /**
+     * Add OR IS EMPTY condition for StringField: field = '' OR field IS NULL
+     *
+     * @param field the string field to check
+     * @return this query for chaining
+     */
+    public HelixQuery<T> orIsEmpty(StringField field) {
+        predicateBuilder.or(field.isEmpty(root));
+        return this;
+    }
+
+    /**
+     * Add OR IS NOT EMPTY condition for StringField: field != '' AND field IS NOT NULL
+     *
+     * @param field the string field to check
+     * @return this query for chaining
+     */
+    public HelixQuery<T> orIsNotEmpty(StringField field) {
+        predicateBuilder.or(field.isNotEmpty(root));
+        return this;
+    }
+
+    /**
+     * Add OR before-now condition for DateTime fields: field < now()
+     */
+    public HelixQuery<T> orBeforeNow(DateTimeField<LocalDateTime> field) {
+        predicateBuilder.or(field.beforeNow(root));
+        return this;
+    }
+
+    /**
+     * Add OR after-now condition for DateTime fields: field > now()
+     */
+    public HelixQuery<T> orAfterNow(DateTimeField<LocalDateTime> field) {
+        predicateBuilder.or(field.afterNow(root));
         return this;
     }
 
