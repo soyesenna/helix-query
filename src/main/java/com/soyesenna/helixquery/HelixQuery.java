@@ -286,6 +286,84 @@ public class HelixQuery<T> {
         return this;
     }
 
+    // ==================== Field-Based NULL Conditions ====================
+
+    /**
+     * Add IS NULL condition using unified HelixField interface.
+     * This method works with all field types: Field, StringField, NumberField,
+     * ComparableField, DateTimeField, RelationField.
+     *
+     * <pre>{@code
+     * // Find users with no assigned department
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereIsNull(UserFields.DEPARTMENT)
+     *     .query();
+     * }</pre>
+     *
+     * @param field the field to check for null
+     * @return this query for chaining
+     */
+    public HelixQuery<T> whereIsNull(HelixField<?> field) {
+        predicateBuilder.and(field.isNull(root));
+        return this;
+    }
+
+    /**
+     * Add IS NOT NULL condition using unified HelixField interface.
+     * This method works with all field types: Field, StringField, NumberField,
+     * ComparableField, DateTimeField, RelationField.
+     *
+     * <pre>{@code
+     * // Find users with assigned department
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereIsNotNull(UserFields.DEPARTMENT)
+     *     .query();
+     * }</pre>
+     *
+     * @param field the field to check for not null
+     * @return this query for chaining
+     */
+    public HelixQuery<T> whereIsNotNull(HelixField<?> field) {
+        predicateBuilder.and(field.isNotNull(root));
+        return this;
+    }
+
+    /**
+     * Add IS EMPTY condition for StringField: field = '' OR field IS NULL
+     *
+     * <pre>{@code
+     * // Find users with empty or null nickname
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereIsEmpty(UserFields.NICKNAME)
+     *     .query();
+     * }</pre>
+     *
+     * @param field the string field to check
+     * @return this query for chaining
+     */
+    public HelixQuery<T> whereIsEmpty(StringField field) {
+        predicateBuilder.and(field.isEmpty(root));
+        return this;
+    }
+
+    /**
+     * Add IS NOT EMPTY condition for StringField: field != '' AND field IS NOT NULL
+     *
+     * <pre>{@code
+     * // Find users with non-empty nickname
+     * List<User> users = queryFactory.query(User.class)
+     *     .whereIsNotEmpty(UserFields.NICKNAME)
+     *     .query();
+     * }</pre>
+     *
+     * @param field the string field to check
+     * @return this query for chaining
+     */
+    public HelixQuery<T> whereIsNotEmpty(StringField field) {
+        predicateBuilder.and(field.isNotEmpty(root));
+        return this;
+    }
+
     /**
      * Add before-now condition for DateTime fields: field < now()
      */
