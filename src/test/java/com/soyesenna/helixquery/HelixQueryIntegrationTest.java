@@ -15,6 +15,8 @@ import com.soyesenna.helixquery.entity.ProductFields;
 import com.soyesenna.helixquery.entity.User;
 import com.soyesenna.helixquery.entity.UserFields;
 import com.soyesenna.helixquery.entity.UserStatus;
+import com.soyesenna.helixquery.expression.ConstantExpression;
+import com.soyesenna.helixquery.expression.OperationExpression;
 import com.soyesenna.helixquery.expression.PredicateExpression;
 import com.soyesenna.helixquery.predicate.PredicateBuilder;
 import com.soyesenna.helixquery.projection.Projections;
@@ -33,13 +35,16 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -1671,5 +1676,439 @@ class HelixQueryIntegrationTest {
         assertEquals(4, users.size());
         // Engineering comes before Marketing alphabetically
         assertEquals("Engineering", users.get(0).getDepartment().getName());
+    }
+
+    // ==================== Advanced Predicate Utilities ====================
+
+    @Test
+    @Order(220)
+    @DisplayName("whereAnyOf() - should combine predicates with OR and ignore nulls")
+    void testWhereAnyOf() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+
+        List<User> users = query
+                .whereAnyOf(
+                        UserFields.STATUS.eq(query.root(), UserStatus.ACTIVE),
+                        null,
+                        UserFields.STATUS.eq(query.root(), UserStatus.PENDING)
+                )
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(3, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+        assertEquals("Diana", users.get(2).getName());
+    }
+
+    @Test
+    @Order(221)
+    @DisplayName("whereAllOf() - should combine predicates with AND and ignore nulls")
+    void testWhereAllOf() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+
+        List<User> users = query
+                .whereAllOf(
+                        UserFields.STATUS.eq(query.root(), UserStatus.ACTIVE),
+                        null,
+                        UserFields.AGE.gt(query.root(), 26)
+                )
+                .query();
+
+        assertEquals(1, users.size());
+        assertEquals("Alice", users.get(0).getName());
+    }
+
+    @Test
+    @Order(222)
+    @DisplayName("whereGroup() - should build nested predicate group with AND")
+    void testWhereGroup() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+
+        List<User> users = query
+                .whereEqual(UserFields.STATUS, UserStatus.ACTIVE)
+                .whereGroup(group -> group
+                        .or(UserFields.NAME.startsWith(query.root(), "A"))
+                        .or(UserFields.NAME.startsWith(query.root(), "B")))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+    }
+
+    @Test
+    @Order(223)
+    @DisplayName("orGroup() - should build nested predicate group with OR")
+    void testOrGroup() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+
+        List<User> users = query
+                .whereEqual(UserFields.NAME, "Charlie")
+                .orGroup(group -> group
+                        .and(UserFields.STATUS.eq(query.root(), UserStatus.ACTIVE))
+                        .and(UserFields.AGE.gt(query.root(), 26)))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Charlie", users.get(1).getName());
+    }
+
+    @Test
+    @Order(224)
+    @DisplayName("when() - should conditionally customize the query")
+    void testWhen() {
+        List<User> allUsers = queryFactory.query(User.class)
+                .when(false, q -> q.whereEqual(UserFields.NAME, "Alice"))
+                .query();
+
+        assertEquals(4, allUsers.size());
+
+        List<User> onlyAlice = queryFactory.query(User.class)
+                .when(true, q -> q.whereEqual(UserFields.NAME, "Alice"))
+                .query();
+
+        assertEquals(1, onlyAlice.size());
+        assertEquals("Alice", onlyAlice.get(0).getName());
+    }
+
+    // ==================== Pageable Utilities ====================
+
+    @Test
+    @Order(230)
+    @DisplayName("pageableOrderByDesc() - should apply offset/limit and ordering")
+    void testPageableOrderByDesc() {
+        List<User> users = queryFactory.query(User.class)
+                .pageableOrderByDesc(PageRequest.of(0, 2), UserFields.AGE)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Charlie", users.get(0).getName());
+        assertEquals("Alice", users.get(1).getName());
+    }
+
+    @Test
+    @Order(231)
+    @DisplayName("pageable() - should apply sorting via Field resolver and ignore unknown properties")
+    void testPageableWithSortFieldResolver() {
+        com.soyesenna.helixquery.field.Field<Integer> ageField =
+                new com.soyesenna.helixquery.field.Field<>("age", Integer.class, User.class);
+
+        List<User> users = queryFactory.query(User.class)
+                .pageable(
+                        PageRequest.of(0, 2, Sort.by(Sort.Order.desc("age"), Sort.Order.asc("unknown"))),
+                        property -> "age".equals(property) ? ageField : null
+                )
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Charlie", users.get(0).getName());
+        assertEquals("Alice", users.get(1).getName());
+    }
+
+    // ==================== OperationExpression / Aggregate Queries ====================
+
+    @Test
+    @Order(240)
+    @DisplayName("querySelect() - should support aggregate operations (avg, countDistinct)")
+    void testOperationExpressionAggregates() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+
+        List<Double> avgAge = query.querySelect(UserFields.AGE.avg(query.root()));
+        assertEquals(1, avgAge.size());
+        assertEquals(29.5, avgAge.get(0), 0.0001);
+
+        List<Long> distinctStatusCount = query.querySelect(
+                OperationExpression.countDistinct(UserFields.STATUS.path(query.root()))
+        );
+        assertEquals(1, distinctStatusCount.size());
+        assertEquals(3L, distinctStatusCount.get(0));
+    }
+
+    @Test
+    @Order(241)
+    @DisplayName("querySelect() - should support collection SIZE() and String operations")
+    void testOperationExpressionCollectionSizeAndStringOps() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+
+        List<Integer> orderCounts = query
+                .orderByAsc(UserFields.NAME)
+                .querySelect(UserFields.ORDERS.size(query.root()));
+
+        assertEquals(List.of(2, 1, 0, 0), orderCounts);
+
+        HelixQuery<User> queryForUpper = queryFactory.query(User.class)
+                .orderByAsc(UserFields.NAME);
+        List<String> upperNames = queryForUpper
+                .querySelect(UserFields.NAME.upper(queryForUpper.root()));
+
+        assertEquals(List.of("ALICE", "BOB", "CHARLIE", "DIANA"), upperNames);
+
+        HelixQuery<User> queryForLength = queryFactory.query(User.class)
+                .orderByAsc(UserFields.NAME);
+        List<Integer> nameLengths = queryForLength
+                .querySelect(UserFields.NAME.length(queryForLength.root()));
+
+        assertEquals(List.of(5, 3, 7, 5), nameLengths);
+    }
+
+    @Test
+    @Order(242)
+    @DisplayName("CollectionField.contains() - should compile MEMBER OF predicate")
+    void testCollectionFieldContains() {
+        com.soyesenna.helixquery.entity.Order order = entityManager.createQuery(
+                        "SELECT o FROM Order o WHERE o.orderNumber = 'ORD-001'",
+                        com.soyesenna.helixquery.entity.Order.class
+                )
+                .getSingleResult();
+
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.ORDERS.contains(query.root(), order))
+                .query();
+
+        assertEquals(1, users.size());
+        assertEquals("Alice", users.get(0).getName());
+    }
+
+    // ==================== GROUP BY COUNT ====================
+
+    @Test
+    @Order(250)
+    @DisplayName("groupByCount() - should return counts grouped by ComparableField")
+    void testGroupByCountComparableField() {
+        Map<UserStatus, Long> counts = queryFactory.query(User.class).groupByCount(UserFields.STATUS);
+
+        assertEquals(3, counts.size());
+        assertEquals(2L, counts.get(UserStatus.ACTIVE));
+        assertEquals(1L, counts.get(UserStatus.INACTIVE));
+        assertEquals(1L, counts.get(UserStatus.PENDING));
+    }
+
+    @Test
+    @Order(251)
+    @DisplayName("groupByCount() - should support relationPath auto-join for nested fields")
+    void testGroupByCountNestedRelationField() {
+        Map<String, Long> counts = queryFactory.query(User.class).groupByCount(UserFields.DEPARTMENT.NAME);
+
+        assertEquals(Map.of("Engineering", 2L, "Marketing", 2L), counts);
+    }
+
+    @Test
+    @Order(252)
+    @DisplayName("groupByCount() - should group by Field<Boolean> (true/false)")
+    void testGroupByCountBooleanField() {
+        Map<Boolean, Long> counts = queryFactory.query(User.class).groupByCount(UserFields.ACTIVE);
+
+        assertEquals(2, counts.size());
+        assertEquals(3L, counts.get(true));
+        assertEquals(1L, counts.get(false));
+    }
+
+    @Test
+    @Order(253)
+    @DisplayName("groupByCount() - should group by RelationField entity")
+    void testGroupByCountRelationField() {
+        Map<Department, Long> counts = queryFactory.query(User.class).groupByCount(UserFields.DEPARTMENT.$);
+
+        Map<String, Long> byName = counts.entrySet().stream()
+                .collect(Collectors.toMap(e -> e.getKey().getName(), Map.Entry::getValue));
+
+        assertEquals(Map.of("Engineering", 2L, "Marketing", 2L), byName);
+    }
+
+    // ==================== In-Memory groupBy() Utilities ====================
+
+    @Test
+    @Order(260)
+    @DisplayName("groupBy(Function) - should group query results in memory")
+    void testGroupByFunction() {
+        Map<UserStatus, List<User>> grouped = queryFactory.query(User.class).groupBy(User::getStatus);
+
+        assertEquals(3, grouped.size());
+        assertEquals(2, grouped.get(UserStatus.ACTIVE).size());
+        assertEquals(1, grouped.get(UserStatus.INACTIVE).size());
+        assertEquals(1, grouped.get(UserStatus.PENDING).size());
+    }
+
+    @Test
+    @Order(261)
+    @DisplayName("groupBy(ComparableField) - should group by declared field using reflection")
+    void testGroupByComparableField() {
+        Map<UserStatus, List<User>> grouped = queryFactory.query(User.class).groupBy(UserFields.STATUS);
+
+        assertEquals(3, grouped.size());
+        assertEquals(2, grouped.get(UserStatus.ACTIVE).size());
+        assertEquals(1, grouped.get(UserStatus.INACTIVE).size());
+        assertEquals(1, grouped.get(UserStatus.PENDING).size());
+    }
+
+    @Test
+    @Order(262)
+    @DisplayName("groupBy(Field) - should throw when field does not exist on entity")
+    void testGroupByMissingFieldThrows() {
+        com.soyesenna.helixquery.field.Field<String> missing =
+                new com.soyesenna.helixquery.field.Field<>("doesNotExist", String.class, User.class);
+
+        assertThrows(RuntimeException.class, () -> queryFactory.query(User.class).groupBy(missing));
+    }
+
+    // ==================== Convenience WHERE wrappers ====================
+
+    @Test
+    @Order(270)
+    @DisplayName("whereIsNull/whereIsNotNull - should build null predicates")
+    void testWhereIsNullWrappers() {
+        User alice = entityManager.createQuery("SELECT u FROM User u WHERE u.name = 'Alice'", User.class)
+                .getSingleResult();
+        alice.setAge(null);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<User> nullAgeUsers = queryFactory.query(User.class)
+                .whereIsNull(UserFields.AGE)
+                .query();
+
+        assertEquals(1, nullAgeUsers.size());
+        assertEquals("Alice", nullAgeUsers.get(0).getName());
+
+        long notNullCount = queryFactory.query(User.class)
+                .whereIsNotNull(UserFields.AGE)
+                .queryCount();
+
+        assertEquals(3, notNullCount);
+    }
+
+    @Test
+    @Order(271)
+    @DisplayName("whereBeforeNow/whereAfterNow - should use DateTimeField now helpers")
+    void testWhereBeforeAfterNowWrappers() {
+        long beforeNow = queryFactory.query(User.class)
+                .whereBeforeNow(UserFields.CREATED_AT)
+                .queryCount();
+
+        long afterNow = queryFactory.query(User.class)
+                .whereAfterNow(UserFields.CREATED_AT)
+                .queryCount();
+
+        assertEquals(4, beforeNow);
+        assertEquals(0, afterNow);
+    }
+
+    @Test
+    @Order(272)
+    @DisplayName("whereIsEmpty/whereIsNotEmpty - should handle empty or null strings")
+    void testWhereIsEmptyWrappers() {
+        Department engineering = entityManager.createQuery(
+                        "SELECT d FROM Department d WHERE d.name = 'Engineering'", Department.class)
+                .getSingleResult();
+        engineering.setDescription("");
+        Department marketing = entityManager.createQuery(
+                        "SELECT d FROM Department d WHERE d.name = 'Marketing'", Department.class)
+                .getSingleResult();
+        marketing.setDescription(null);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<Department> emptyDescriptions = queryFactory.query(Department.class)
+                .whereIsEmpty(DepartmentFields.DESCRIPTION)
+                .orderByAsc(DepartmentFields.NAME)
+                .query();
+
+        assertEquals(2, emptyDescriptions.size());
+
+        long notEmptyCount = queryFactory.query(Department.class)
+                .whereIsNotEmpty(DepartmentFields.DESCRIPTION)
+                .queryCount();
+
+        assertEquals(0, notEmptyCount);
+    }
+
+    @Test
+    @Order(273)
+    @DisplayName("whereGreaterThanOrEqual/whereLessThanOrEqual/orGreaterThanOrEqual - should build comparison predicates")
+    void testComparisonWrapperMethods() {
+        List<String> geNames = queryFactory.query(User.class)
+                .whereGreaterThanOrEqual(UserFields.AGE, 30)
+                .orderByAsc(UserFields.NAME)
+                .query()
+                .stream()
+                .map(User::getName)
+                .toList();
+
+        assertEquals(List.of("Alice", "Charlie"), geNames);
+
+        List<String> leNames = queryFactory.query(User.class)
+                .whereLessThanOrEqual(UserFields.AGE, 28)
+                .orderByAsc(UserFields.NAME)
+                .query()
+                .stream()
+                .map(User::getName)
+                .toList();
+
+        assertEquals(List.of("Bob", "Diana"), leNames);
+
+        List<String> orNames = queryFactory.query(User.class)
+                .whereEqual(UserFields.NAME, "Bob")
+                .orGreaterThanOrEqual(UserFields.AGE, 35)
+                .orderByAsc(UserFields.NAME)
+                .query()
+                .stream()
+                .map(User::getName)
+                .toList();
+
+        assertEquals(List.of("Bob", "Charlie"), orNames);
+    }
+
+    // ==================== Security-focused Inputs ====================
+
+    @Test
+    @Order(280)
+    @DisplayName("whereContains() - should escape LIKE wildcards to prevent pattern injection")
+    void testWhereContainsEscapesWildcards() {
+        User special = new User("100%_User", "special@example.com", 20);
+        special.setActive(true);
+        special.setStatus(UserStatus.ACTIVE);
+        entityManager.persist(special);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<User> users = queryFactory.query(User.class)
+                .whereContains(UserFields.NAME, "%")
+                .query();
+
+        // If wildcards were not escaped, "%" would match all rows (pattern injection risk).
+        // Current implementation escapes wildcards, so this should NOT return all users.
+        assertTrue(users.isEmpty());
+    }
+
+    @Test
+    @Order(281)
+    @DisplayName("whereEqual() - should treat SQL injection-like input as a literal value")
+    void testWhereEqualSqlInjectionLikeInput() {
+        List<User> users = queryFactory.query(User.class)
+                .whereEqual(UserFields.EMAIL, "alice@example.com' OR 1=1 --")
+                .query();
+
+        assertTrue(users.isEmpty());
+    }
+
+    @Test
+    @Order(282)
+    @DisplayName("querySelect() - should support concat with ConstantExpression")
+    void testOperationExpressionConcat() {
+        HelixQuery<User> query = queryFactory.query(User.class);
+
+        List<String> labels = query
+                .orderByAsc(UserFields.NAME)
+                .querySelect(OperationExpression.concat(
+                        UserFields.NAME.path(query.root()),
+                        ConstantExpression.of("_label")
+                ));
+
+        assertEquals(List.of("Alice_label", "Bob_label", "Charlie_label", "Diana_label"), labels);
     }
 }
