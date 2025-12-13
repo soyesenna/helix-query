@@ -311,6 +311,52 @@ public class HelixQuery<T> {
     }
 
     /**
+     * Add greater-than condition for datetime fields: field > value
+     *
+     * <pre>{@code
+     * // Find contests where application hasn't started yet
+     * LocalDateTime now = LocalDateTime.now();
+     * List<Contest> upcoming = queryFactory.query(Contest.class)
+     *     .whereGreaterThan(ContestFields.APPLICATION_START_AT, now)
+     *     .query();
+     * }</pre>
+     *
+     * @param field the datetime field to compare
+     * @param value the value to compare against
+     * @param <V>   the temporal type
+     * @return this query for chaining
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> whereGreaterThan(DateTimeField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.after(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add less-than condition for datetime fields: field < value
+     *
+     * <pre>{@code
+     * // Find contests that have ended
+     * LocalDateTime now = LocalDateTime.now();
+     * List<Contest> ended = queryFactory.query(Contest.class)
+     *     .whereLessThan(ContestFields.PROGRESS_END_AT, now)
+     *     .query();
+     * }</pre>
+     *
+     * @param field the datetime field to compare
+     * @param value the value to compare against
+     * @param <V>   the temporal type
+     * @return this query for chaining
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> whereLessThan(DateTimeField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.and(field.before(root, value));
+        }
+        return this;
+    }
+
+    /**
      * Add greater-than-or-equal condition for datetime fields: field >= value
      */
     public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> whereGreaterThanOrEqual(DateTimeField<V> field, V value) {
@@ -586,6 +632,26 @@ public class HelixQuery<T> {
     public <V extends Number & Comparable<V>> HelixQuery<T> orLessThanOrEqual(NumberField<V> field, V value) {
         if (value != null) {
             predicateBuilder.or(field.le(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR greater-than condition for datetime fields: field > value
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> orGreaterThan(DateTimeField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.after(root, value));
+        }
+        return this;
+    }
+
+    /**
+     * Add OR less-than condition for datetime fields: field < value
+     */
+    public <V extends java.time.temporal.Temporal & Comparable<? super V>> HelixQuery<T> orLessThan(DateTimeField<V> field, V value) {
+        if (value != null) {
+            predicateBuilder.or(field.before(root, value));
         }
         return this;
     }
@@ -1675,6 +1741,156 @@ public class HelixQuery<T> {
      */
     public <V extends Comparable<? super V>> Map<V, Long> groupByCount(ComparableField<V> field) {
         return executeGroupByCount(field.path(root), field.type());
+    }
+
+    /**
+     * Execute a GROUP BY query for RelationField and return counts per group.
+     * Groups by the related entity (ManyToOne, OneToOne relationships).
+     *
+     * <pre>{@code
+     * // Count tickets per contest
+     * Map<Contest, Long> ticketCountByContest = queryFactory.query(Ticket.class)
+     *     .groupByCount(TicketFields.CONTEST);
+     *
+     * // With additional conditions
+     * Map<Contest, Long> paidTicketsByContest = queryFactory.query(Ticket.class)
+     *     .whereEqual(TicketFields.PAYMENT_STATUS, PaymentStatus.PAID)
+     *     .groupByCount(TicketFields.CONTEST);
+     * }</pre>
+     *
+     * @param field the relation field to group by
+     * @param <R>   the related entity type
+     * @return a Map where keys are related entities and values are counts
+     */
+    public <R> Map<R, Long> groupByCount(RelationField<R> field) {
+        return executeGroupByCount(field.path(root), field.targetType());
+    }
+
+    // ==================== EXECUTION - GROUP BY TO LIST ====================
+
+    /**
+     * Execute the query and group results by a key extractor function.
+     * Returns a Map where keys are extracted values and values are lists of matching entities.
+     *
+     * <pre>{@code
+     * // Group tickets by contest
+     * Map<Contest, List<Ticket>> ticketsByContest = queryFactory.query(Ticket.class)
+     *     .whereEqual(TicketFields.PAYMENT_STATUS, PaymentStatus.PAID)
+     *     .groupBy(Ticket::getContest);
+     *
+     * // Group users by status
+     * Map<UserStatus, List<User>> usersByStatus = queryFactory.query(User.class)
+     *     .groupBy(User::getStatus);
+     * }</pre>
+     *
+     * @param keyExtractor function to extract the grouping key from each entity
+     * @param <K>          the key type
+     * @return a Map where keys are extracted values and values are lists of entities
+     */
+    public <K> Map<K, List<T>> groupBy(Function<T, K> keyExtractor) {
+        return query().stream()
+                .collect(java.util.stream.Collectors.groupingBy(keyExtractor));
+    }
+
+    /**
+     * Execute the query and group results by a RelationField.
+     * Returns a Map where keys are related entities and values are lists of matching entities.
+     *
+     * <pre>{@code
+     * // Group tickets by contest using field reference
+     * Map<Contest, List<Ticket>> ticketsByContest = queryFactory.query(Ticket.class)
+     *     .whereEqual(TicketFields.PAYMENT_STATUS, PaymentStatus.PAID)
+     *     .groupBy(TicketFields.CONTEST);
+     * }</pre>
+     *
+     * @param field the relation field to group by
+     * @param <R>   the related entity type
+     * @return a Map where keys are related entities and values are lists of entities
+     */
+    @SuppressWarnings("unchecked")
+    public <R> Map<R, List<T>> groupBy(RelationField<R> field) {
+        List<T> results = query();
+        return results.stream()
+                .collect(java.util.stream.Collectors.groupingBy(entity -> {
+                    try {
+                        java.lang.reflect.Field entityField = entityClass.getDeclaredField(field.name());
+                        entityField.setAccessible(true);
+                        return (R) entityField.get(entity);
+                    } catch (NoSuchFieldException | IllegalAccessException e) {
+                        throw new RuntimeException("Failed to access field: " + field.name(), e);
+                    }
+                }));
+    }
+
+    /**
+     * Execute the query and group results by a Field.
+     * Returns a Map where keys are field values and values are lists of matching entities.
+     *
+     * <pre>{@code
+     * // Group users by status field
+     * Map<UserStatus, List<User>> usersByStatus = queryFactory.query(User.class)
+     *     .groupBy(UserFields.STATUS);
+     * }</pre>
+     *
+     * @param field the field to group by
+     * @param <V>   the field value type
+     * @return a Map where keys are field values and values are lists of entities
+     */
+    @SuppressWarnings("unchecked")
+    public <V> Map<V, List<T>> groupBy(Field<V> field) {
+        List<T> results = query();
+        return results.stream()
+                .collect(java.util.stream.Collectors.groupingBy(entity -> {
+                    try {
+                        java.lang.reflect.Field entityField = entityClass.getDeclaredField(field.name());
+                        entityField.setAccessible(true);
+                        return (V) entityField.get(entity);
+                    } catch (NoSuchFieldException | IllegalAccessException e) {
+                        throw new RuntimeException("Failed to access field: " + field.name(), e);
+                    }
+                }));
+    }
+
+    /**
+     * Execute the query and group results by a StringField.
+     *
+     * @param field the string field to group by
+     * @return a Map where keys are string values and values are lists of entities
+     */
+    public Map<String, List<T>> groupBy(StringField field) {
+        List<T> results = query();
+        return results.stream()
+                .collect(java.util.stream.Collectors.groupingBy(entity -> {
+                    try {
+                        java.lang.reflect.Field entityField = entityClass.getDeclaredField(field.name());
+                        entityField.setAccessible(true);
+                        return (String) entityField.get(entity);
+                    } catch (NoSuchFieldException | IllegalAccessException e) {
+                        throw new RuntimeException("Failed to access field: " + field.name(), e);
+                    }
+                }));
+    }
+
+    /**
+     * Execute the query and group results by a ComparableField.
+     *
+     * @param field the comparable field to group by
+     * @param <V>   the comparable type
+     * @return a Map where keys are field values and values are lists of entities
+     */
+    @SuppressWarnings("unchecked")
+    public <V extends Comparable<? super V>> Map<V, List<T>> groupBy(ComparableField<V> field) {
+        List<T> results = query();
+        return results.stream()
+                .collect(java.util.stream.Collectors.groupingBy(entity -> {
+                    try {
+                        java.lang.reflect.Field entityField = entityClass.getDeclaredField(field.name());
+                        entityField.setAccessible(true);
+                        return (V) entityField.get(entity);
+                    } catch (NoSuchFieldException | IllegalAccessException e) {
+                        throw new RuntimeException("Failed to access field: " + field.name(), e);
+                    }
+                }));
     }
 
     /**
