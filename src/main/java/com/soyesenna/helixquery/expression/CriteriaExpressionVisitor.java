@@ -206,6 +206,8 @@ public class CriteriaExpressionVisitor implements ExpressionVisitor<jakarta.pers
                 yield cb.or(left, right);
             }
             case NOT -> cb.not(compilePredicate((PredicateExpression) args.get(0), ctx));
+            case TRUE -> cb.conjunction();  // Always true predicate (1=1)
+            case FALSE -> cb.disjunction(); // Always false predicate (1=0)
 
             // Collection operations
             case IN -> {

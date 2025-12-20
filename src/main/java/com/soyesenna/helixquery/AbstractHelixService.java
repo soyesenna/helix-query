@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Collection;
+import java.util.Collections;
 
 /**
  * Abstract base class for services using HelixQuery.
@@ -261,6 +263,96 @@ public abstract class AbstractHelixService<T> {
      */
     public <V> HelixQuery<T> findBy(HelixField<V> field, V value) {
         return find().whereEqual(field, value);
+    }
+
+    /**
+     * Start a query with an IN filter using the unified HelixField interface.
+     * Filters entities where the field value is in the given collection.
+     *
+     * <pre>{@code
+     * // Example usage:
+     * List<Long> ticketIds = List.of(1L, 2L, 3L);
+     * List<Ticket> tickets = ticketService.findBy(TicketFields.ID, ticketIds).query();
+     *
+     * // With additional conditions:
+     * List<User> users = userService.findBy(UserFields.ID, userIds)
+     *     .whereEqual(UserFields.STATUS, UserStatus.ACTIVE)
+     *     .query();
+     *
+     * // With enum values:
+     * List<UserStatus> statuses = List.of(UserStatus.ACTIVE, UserStatus.PENDING);
+     * List<User> users = userService.findBy(UserFields.STATUS, statuses).query();
+     * }</pre>
+     *
+     * @param field  the field to filter on (any HelixField type)
+     * @param values the collection of values to match (IN clause)
+     * @param <V>    the field value type
+     * @return a new HelixQuery instance with the IN filter applied
+     */
+    public <V> HelixQuery<T> findBy(HelixField<V> field, Collection<? extends V> values) {
+        if (values == null || values.isEmpty()) {
+            return find().where(PredicateExpression.alwaysFalse());
+        }
+        return find().where(field.in(find().root(), values));
+    }
+
+    /**
+     * Start a query with an IN filter for Field type.
+     *
+     * @param field  the field to filter on
+     * @param values the collection of values to match
+     * @param <V>    the field value type
+     * @return a new HelixQuery instance with the IN filter applied
+     */
+    public <V> HelixQuery<T> findBy(Field<V> field, Collection<? extends V> values) {
+        if (values == null || values.isEmpty()) {
+            return find().where(PredicateExpression.alwaysFalse());
+        }
+        return find().whereIn(field, values);
+    }
+
+    /**
+     * Start a query with an IN filter for StringField type.
+     *
+     * @param field  the string field to filter on
+     * @param values the collection of string values to match
+     * @return a new HelixQuery instance with the IN filter applied
+     */
+    public HelixQuery<T> findBy(StringField field, Collection<String> values) {
+        if (values == null || values.isEmpty()) {
+            return find().where(PredicateExpression.alwaysFalse());
+        }
+        return find().whereIn(field, values);
+    }
+
+    /**
+     * Start a query with an IN filter for NumberField type.
+     *
+     * @param field  the number field to filter on
+     * @param values the collection of number values to match
+     * @param <V>    the number type
+     * @return a new HelixQuery instance with the IN filter applied
+     */
+    public <V extends Number & Comparable<V>> HelixQuery<T> findBy(NumberField<V> field, Collection<? extends V> values) {
+        if (values == null || values.isEmpty()) {
+            return find().where(PredicateExpression.alwaysFalse());
+        }
+        return find().whereIn(field, values);
+    }
+
+    /**
+     * Start a query with an IN filter for ComparableField type.
+     *
+     * @param field  the comparable field to filter on
+     * @param values the collection of comparable values to match
+     * @param <V>    the comparable type
+     * @return a new HelixQuery instance with the IN filter applied
+     */
+    public <V extends Comparable<? super V>> HelixQuery<T> findBy(ComparableField<V> field, Collection<? extends V> values) {
+        if (values == null || values.isEmpty()) {
+            return find().where(PredicateExpression.alwaysFalse());
+        }
+        return find().whereIn(field, values);
     }
 
     /**

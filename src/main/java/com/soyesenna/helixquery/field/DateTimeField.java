@@ -9,6 +9,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.Temporal;
+import java.util.Collection;
 import java.util.Objects;
 
 /**
@@ -176,6 +177,29 @@ public record DateTimeField<T extends Temporal & Comparable<? super T>>(
         }
         throw new UnsupportedOperationException(
                 "onOrAfterNow is only supported for LocalDateTime, LocalDate, or LocalTime");
+    }
+
+    // ==================== Collection Predicates ====================
+
+    /**
+     * Create an IN predicate: field IN (values)
+     */
+    public PredicateExpression in(PathExpression<?> root, Collection<? extends T> values) {
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        return PredicateExpression.in(path(root), values);
+    }
+
+    /**
+     * Create an IN predicate: field IN (values)
+     */
+    @SafeVarargs
+    public final PredicateExpression in(PathExpression<?> root, T... values) {
+        if (values == null || values.length == 0) {
+            return null;
+        }
+        return PredicateExpression.in(path(root), values);
     }
 
     // ==================== Null Predicates ====================

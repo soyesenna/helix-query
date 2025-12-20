@@ -100,6 +100,26 @@ public class PredicateExpression implements Expression<Boolean> {
     // ==================== Static Factory Methods ====================
 
     /**
+     * Create a predicate that always evaluates to TRUE.
+     * Useful for building dynamic queries where a condition might be optional.
+     *
+     * @return a predicate that always evaluates to TRUE
+     */
+    public static PredicateExpression alwaysTrue() {
+        return new PredicateExpression(Operator.TRUE);
+    }
+
+    /**
+     * Create a predicate that always evaluates to FALSE.
+     * Useful for handling empty collection IN queries (empty IN should return no results).
+     *
+     * @return a predicate that always evaluates to FALSE
+     */
+    public static PredicateExpression alwaysFalse() {
+        return new PredicateExpression(Operator.FALSE);
+    }
+
+    /**
      * Combine multiple predicates using AND.
      */
     public static PredicateExpression and(PredicateExpression... predicates) {

@@ -49,6 +49,10 @@ public enum Operator {
     OR,
     /** Logical NOT: NOT a */
     NOT,
+    /** Boolean literal TRUE */
+    TRUE,
+    /** Boolean literal FALSE */
+    FALSE,
 
     // ==================== String Operators ====================
     /** Like pattern: a LIKE b */

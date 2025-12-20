@@ -2111,4 +2111,181 @@ class HelixQueryIntegrationTest {
 
         assertEquals(List.of("Alice_label", "Bob_label", "Charlie_label", "Diana_label"), labels);
     }
+
+    // ==================== findBy(Field, Collection) Tests ====================
+
+    @Test
+    @Order(290)
+    @DisplayName("HelixField.in(Collection) - should filter by collection of IDs")
+    void testHelixFieldInWithCollection() {
+        // Get all users and their IDs
+        List<User> allUsers = queryFactory.query(User.class).query();
+        List<Long> targetIds = allUsers.stream()
+                .filter(u -> u.getName().equals("Alice") || u.getName().equals("Bob"))
+                .map(User::getId)
+                .toList();
+
+        // Use the in() method via HelixField interface
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.ID.in(query.root(), targetIds))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+    }
+
+    @Test
+    @Order(291)
+    @DisplayName("HelixField.in(Collection) - should filter by collection of enum values")
+    void testHelixFieldInWithEnumCollection() {
+        List<UserStatus> statuses = List.of(UserStatus.ACTIVE, UserStatus.PENDING);
+
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.STATUS.in(query.root(), statuses))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(3, users.size()); // Alice(ACTIVE), Bob(ACTIVE), Diana(PENDING)
+        assertTrue(users.stream().allMatch(u ->
+                u.getStatus() == UserStatus.ACTIVE || u.getStatus() == UserStatus.PENDING));
+    }
+
+    @Test
+    @Order(292)
+    @DisplayName("HelixField.in(Collection) - should filter by collection of strings")
+    void testHelixFieldInWithStringCollection() {
+        List<String> names = List.of("Alice", "Charlie");
+
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.NAME.in(query.root(), names))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Charlie", users.get(1).getName());
+    }
+
+    @Test
+    @Order(293)
+    @DisplayName("HelixField.in(Collection) - should return null for empty collection (no-op)")
+    void testHelixFieldInWithEmptyCollection() {
+        List<Long> emptyIds = List.of();
+
+        HelixQuery<User> query = queryFactory.query(User.class);
+        PredicateExpression predicate = UserFields.ID.in(query.root(), emptyIds);
+
+        assertNull(predicate); // Empty collection returns null predicate
+    }
+
+    @Test
+    @Order(294)
+    @DisplayName("PredicateExpression.alwaysFalse() - should return no results")
+    void testAlwaysFalsePredicate() {
+        List<User> users = queryFactory.query(User.class)
+                .where(PredicateExpression.alwaysFalse())
+                .query();
+
+        assertTrue(users.isEmpty());
+    }
+
+    @Test
+    @Order(295)
+    @DisplayName("PredicateExpression.alwaysTrue() - should return all results")
+    void testAlwaysTruePredicate() {
+        List<User> users = queryFactory.query(User.class)
+                .where(PredicateExpression.alwaysTrue())
+                .query();
+
+        assertEquals(4, users.size()); // All 4 users
+    }
+
+    @Test
+    @Order(296)
+    @DisplayName("whereIn() with Collection - should filter by ID collection")
+    void testWhereInWithCollection() {
+        // Get Alice and Charlie's IDs
+        List<User> allUsers = queryFactory.query(User.class).query();
+        List<Long> targetIds = allUsers.stream()
+                .filter(u -> u.getName().equals("Alice") || u.getName().equals("Charlie"))
+                .map(User::getId)
+                .toList();
+
+        List<User> users = queryFactory.query(User.class)
+                .whereIn(UserFields.ID, targetIds)
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Charlie", users.get(1).getName());
+    }
+
+    @Test
+    @Order(297)
+    @DisplayName("Combined IN with other predicates - should chain correctly")
+    void testInWithOtherPredicates() {
+        List<UserStatus> statuses = List.of(UserStatus.ACTIVE, UserStatus.PENDING);
+
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.STATUS.in(query.root(), statuses))
+                .whereGreaterThan(UserFields.AGE, 26)
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size()); // Alice(30, ACTIVE), Diana(28, PENDING)
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Diana", users.get(1).getName());
+    }
+
+    @Test
+    @Order(298)
+    @DisplayName("RelationField.in(Collection) - should filter by related entities")
+    void testRelationFieldInWithCollection() {
+        // Get the Engineering department
+        Department engineering = entityManager.createQuery(
+                "SELECT d FROM Department d WHERE d.name = 'Engineering'", Department.class)
+                .getSingleResult();
+
+        List<Department> departments = List.of(engineering);
+
+        // Use UserFields.DEPARTMENT.$ for the RelationField
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.DEPARTMENT.$.in(query.root(), departments))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size()); // Alice and Bob are in Engineering
+        assertTrue(users.stream().allMatch(u ->
+                u.getName().equals("Alice") || u.getName().equals("Bob")));
+    }
+
+    @Test
+    @Order(299)
+    @DisplayName("DateTimeField.in(Collection) - should filter by collection of dates")
+    void testDateTimeFieldInWithCollection() {
+        // Get users with specific birth dates
+        List<User> allUsers = queryFactory.query(User.class).query();
+        List<LocalDate> targetDates = allUsers.stream()
+                .filter(u -> u.getName().equals("Alice") || u.getName().equals("Bob"))
+                .map(User::getBirthDate)
+                .toList();
+
+        HelixQuery<User> query = queryFactory.query(User.class);
+        List<User> users = query
+                .where(UserFields.BIRTH_DATE.in(query.root(), targetDates))
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+    }
 }

@@ -5,6 +5,7 @@ import com.soyesenna.helixquery.expression.PredicateExpression;
 import com.soyesenna.helixquery.order.OrderDirection;
 import com.soyesenna.helixquery.order.OrderSpecifier;
 
+import java.util.Collection;
 import java.util.Objects;
 
 /**
@@ -70,6 +71,35 @@ public record RelationField<T>(
             return isNotNull(root);
         }
         return PredicateExpression.ne(path(root), entity);
+    }
+
+    // ==================== Collection Predicates ====================
+
+    /**
+     * Create an IN predicate: relation IN (entities)
+     * Useful for querying entities related to any of the given entities.
+     *
+     * <pre>{@code
+     * List<Contest> contests = ...;
+     * List<Ticket> tickets = ticketService.findBy(TicketFields.CONTEST, contests).query();
+     * }</pre>
+     */
+    public PredicateExpression in(PathExpression<?> root, Collection<? extends T> values) {
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        return PredicateExpression.in(path(root), values);
+    }
+
+    /**
+     * Create an IN predicate: relation IN (entities)
+     */
+    @SafeVarargs
+    public final PredicateExpression in(PathExpression<?> root, T... values) {
+        if (values == null || values.length == 0) {
+            return null;
+        }
+        return PredicateExpression.in(path(root), values);
     }
 
     // ==================== Null Predicates ====================

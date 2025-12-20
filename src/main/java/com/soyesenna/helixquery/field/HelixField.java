@@ -4,6 +4,8 @@ import com.soyesenna.helixquery.expression.PathExpression;
 import com.soyesenna.helixquery.expression.PredicateExpression;
 import com.soyesenna.helixquery.order.OrderSpecifier;
 
+import java.util.Collection;
+
 /**
  * Common interface for all field types in HelixQuery.
  * Enables unified handling of different field types without method overloading.
@@ -94,4 +96,13 @@ public interface HelixField<T> {
      * @return the order specifier
      */
     OrderSpecifier desc(PathExpression<?> root);
+
+    /**
+     * Create an IN predicate: field IN (values)
+     *
+     * @param root   the root path expression
+     * @param values the collection of values to match
+     * @return the predicate expression, or null if values is null or empty
+     */
+    PredicateExpression in(PathExpression<?> root, Collection<? extends T> values);
 }

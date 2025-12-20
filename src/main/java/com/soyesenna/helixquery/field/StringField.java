@@ -108,7 +108,7 @@ public record StringField(
 
     // ==================== Collection Predicates ====================
 
-    public PredicateExpression in(PathExpression<?> root, Collection<String> values) {
+    public PredicateExpression in(PathExpression<?> root, Collection<? extends String> values) {
         if (values == null || values.isEmpty()) {
             return null;
         }
