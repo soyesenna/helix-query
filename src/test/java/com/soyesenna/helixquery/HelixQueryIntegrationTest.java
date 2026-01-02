@@ -2288,4 +2288,179 @@ class HelixQueryIntegrationTest {
         assertEquals("Alice", users.get(0).getName());
         assertEquals("Bob", users.get(1).getName());
     }
+
+    // ==================== Two-Phase Query Tests (HHH90003004 Fix) ====================
+
+    @Test
+    @Order(300)
+    @DisplayName("Collection fetch + pagination - should use two-phase query to avoid HHH90003004")
+    void testCollectionFetchWithPaginationTwoPhaseQuery() {
+        List<User> users = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .orderByAsc(UserFields.NAME)
+                .limit(2)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Alice", users.get(0).getName());
+        assertEquals("Bob", users.get(1).getName());
+        
+        assertNotNull(users.get(0).getOrders());
+        assertNotNull(users.get(1).getOrders());
+    }
+
+    @Test
+    @Order(301)
+    @DisplayName("Collection fetch + offset/limit - should maintain correct ordering")
+    void testCollectionFetchWithOffsetLimitOrdering() {
+        List<User> users = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .orderByAsc(UserFields.NAME)
+                .offset(1)
+                .limit(2)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Bob", users.get(0).getName());
+        assertEquals("Charlie", users.get(1).getName());
+    }
+
+    @Test
+    @Order(302)
+    @DisplayName("Collection fetch + queryPage - should work with Spring Pageable")
+    void testCollectionFetchWithQueryPage() {
+        Page<User> page = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .queryPageOrderByAsc(PageRequest.of(0, 2), UserFields.NAME);
+
+        assertEquals(4, page.getTotalElements());
+        assertEquals(2, page.getContent().size());
+        assertEquals("Alice", page.getContent().get(0).getName());
+        assertEquals("Bob", page.getContent().get(1).getName());
+        
+        for (User user : page.getContent()) {
+            assertNotNull(user.getOrders());
+        }
+    }
+
+    @Test
+    @Order(303)
+    @DisplayName("Collection fetch + queryOne - should use two-phase for single result with collection")
+    void testCollectionFetchWithQueryOne() {
+        Optional<User> user = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .whereEqual(UserFields.NAME, "Alice")
+                .queryOne();
+
+        assertTrue(user.isPresent());
+        assertEquals("Alice", user.get().getName());
+        assertNotNull(user.get().getOrders());
+        assertEquals(2, user.get().getOrders().size());
+    }
+
+    @Test
+    @Order(304)
+    @DisplayName("Collection fetch + queryFirstOrNull - should use two-phase for first result")
+    void testCollectionFetchWithQueryFirstOrNull() {
+        User user = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .orderByAsc(UserFields.NAME)
+                .queryFirstOrNull();
+
+        assertNotNull(user);
+        assertEquals("Alice", user.getName());
+        assertNotNull(user.getOrders());
+    }
+
+    @Test
+    @Order(305)
+    @DisplayName("Collection fetch without pagination - should NOT use two-phase query")
+    void testCollectionFetchWithoutPagination() {
+        List<User> users = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .orderByAsc(UserFields.NAME)
+                .query();
+
+        assertEquals(4, users.size());
+        for (User user : users) {
+            assertNotNull(user.getOrders());
+        }
+    }
+
+    @Test
+    @Order(306)
+    @DisplayName("Relation fetch (non-collection) + pagination - should NOT use two-phase query")
+    void testRelationFetchWithPagination() {
+        List<User> users = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.DEPARTMENT.$)
+                .orderByAsc(UserFields.NAME)
+                .limit(2)
+                .query();
+
+        assertEquals(2, users.size());
+        for (User user : users) {
+            assertNotNull(user.getDepartment());
+        }
+    }
+
+    @Test
+    @Order(307)
+    @DisplayName("Multiple collection fetches + pagination - should handle correctly")
+    void testMultipleCollectionFetchesWithPagination() {
+        Page<com.soyesenna.helixquery.entity.Order> page = queryFactory.query(com.soyesenna.helixquery.entity.Order.class)
+                .leftFetchJoin(OrderFields.ITEMS)
+                .leftFetchJoin(OrderFields.USER.$)
+                .queryPageOrderByAsc(PageRequest.of(0, 2), OrderFields.ORDER_NUMBER);
+
+        assertEquals(3, page.getTotalElements());
+        assertEquals(2, page.getContent().size());
+        
+        for (com.soyesenna.helixquery.entity.Order order : page.getContent()) {
+            assertNotNull(order.getItems());
+            assertNotNull(order.getUser());
+        }
+    }
+
+    @Test
+    @Order(308)
+    @DisplayName("Collection fetch + WHERE + pagination - should filter correctly with two-phase")
+    void testCollectionFetchWithWhereAndPagination() {
+        List<User> users = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .where(UserFields.STATUS.eq(queryFactory.query(User.class).root(), UserStatus.ACTIVE))
+                .orderByAsc(UserFields.NAME)
+                .limit(1)
+                .query();
+
+        assertEquals(1, users.size());
+        assertEquals("Alice", users.get(0).getName());
+    }
+
+    @Test
+    @Order(309)
+    @DisplayName("Collection fetch + descending order + pagination - should maintain order")
+    void testCollectionFetchWithDescOrderPagination() {
+        List<User> users = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .orderByDesc(UserFields.AGE)
+                .limit(2)
+                .query();
+
+        assertEquals(2, users.size());
+        assertEquals("Charlie", users.get(0).getName());
+        assertEquals("Alice", users.get(1).getName());
+    }
+
+    @Test
+    @Order(310)
+    @DisplayName("Empty result with collection fetch + pagination - should handle gracefully")
+    void testEmptyResultWithCollectionFetchPagination() {
+        List<User> users = queryFactory.query(User.class)
+                .leftFetchJoin(UserFields.ORDERS)
+                .whereEqual(UserFields.NAME, "NonExistent")
+                .limit(10)
+                .query();
+
+        assertTrue(users.isEmpty());
+    }
 }

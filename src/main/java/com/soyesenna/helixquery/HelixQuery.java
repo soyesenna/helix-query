@@ -13,10 +13,15 @@ import jakarta.persistence.NoResultException;
 import jakarta.persistence.Tuple;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.criteria.*;
+import jakarta.persistence.metamodel.EntityType;
+import jakarta.persistence.metamodel.SingularAttribute;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -31,6 +36,8 @@ import java.util.function.Function;
  * @param <T> the entity type being queried
  */
 public class HelixQuery<T> {
+
+    private static final Logger log = LoggerFactory.getLogger(HelixQuery.class);
 
     private final EntityManager entityManager;
     private final Class<T> entityClass;
@@ -1142,6 +1149,9 @@ public class HelixQuery<T> {
      * @return the list of results
      */
     public List<T> query() {
+        if (requiresTwoPhaseQuery()) {
+            return buildQueryWithTwoPhase();
+        }
         return buildQuery().getResultList();
     }
 
@@ -1267,9 +1277,16 @@ public class HelixQuery<T> {
      * @throws IllegalStateException if more than one result
      */
     public Optional<T> queryOne() {
-        TypedQuery<T> typedQuery = buildQuery();
-        typedQuery.setMaxResults(2);
-        List<T> results = typedQuery.getResultList();
+        List<T> results;
+        if (hasCollectionFetch()) {
+            this.limit = 2L;
+            results = buildQueryWithTwoPhase();
+            this.limit = null;
+        } else {
+            TypedQuery<T> typedQuery = buildQuery();
+            typedQuery.setMaxResults(2);
+            results = typedQuery.getResultList();
+        }
         if (results.size() > 1) {
             throw new IllegalStateException("Expected at most one result but found " + results.size());
         }
@@ -1292,6 +1309,12 @@ public class HelixQuery<T> {
      * @return the first result or null if no results
      */
     public T queryFirstOrNull() {
+        if (hasCollectionFetch()) {
+            this.limit = 1L;
+            List<T> results = buildQueryWithTwoPhase();
+            this.limit = null;
+            return results.isEmpty() ? null : results.get(0);
+        }
         TypedQuery<T> typedQuery = buildQuery();
         typedQuery.setMaxResults(1);
         try {
@@ -1322,7 +1345,8 @@ public class HelixQuery<T> {
         CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
         Root<T> countRoot = countQuery.from(entityClass);
 
-        countQuery.select(distinct ? cb.countDistinct(countRoot) : cb.count(countRoot));
+        boolean useDistinctCount = distinct || hasCollectionFetch();
+        countQuery.select(useDistinctCount ? cb.countDistinct(countRoot) : cb.count(countRoot));
 
         CriteriaContext ctx = new CriteriaContext(cb, countRoot, countQuery);
         // Use applyJoinsForCount to exclude fetch joins from count query
@@ -1936,7 +1960,256 @@ public class HelixQuery<T> {
 
     // ==================== Internal Build Methods ====================
 
+    /**
+     * Check if any collection fetch joins are registered.
+     * Collection fetch joins with pagination cause HHH90003004 warning
+     * and in-memory pagination which can lead to OOM and poor performance.
+     */
+    private boolean hasCollectionFetch() {
+        for (JoinSpec joinSpec : joins) {
+            if (joinSpec.fetch()) {
+                // Check if this is a collection field (OneToMany, ManyToMany)
+                // We detect this by checking if the attribute exists as a collection in the entity
+                try {
+                    java.lang.reflect.Field field = entityClass.getDeclaredField(joinSpec.attribute());
+                    Class<?> fieldType = field.getType();
+                    if (Collection.class.isAssignableFrom(fieldType)) {
+                        return true;
+                    }
+                } catch (NoSuchFieldException e) {
+                    // Try to check in superclasses
+                    Class<?> superClass = entityClass.getSuperclass();
+                    while (superClass != null && superClass != Object.class) {
+                        try {
+                            java.lang.reflect.Field field = superClass.getDeclaredField(joinSpec.attribute());
+                            Class<?> fieldType = field.getType();
+                            if (Collection.class.isAssignableFrom(fieldType)) {
+                                return true;
+                            }
+                            break;
+                        } catch (NoSuchFieldException ex) {
+                            superClass = superClass.getSuperclass();
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check if pagination is set.
+     */
+    private boolean hasPagination() {
+        return offset != null || limit != null;
+    }
+
+    private int countCollectionFetches() {
+        int count = 0;
+        for (JoinSpec joinSpec : joins) {
+            if (joinSpec.fetch()) {
+                try {
+                    java.lang.reflect.Field field = findFieldInHierarchy(entityClass, joinSpec.attribute());
+                    if (field != null && Collection.class.isAssignableFrom(field.getType())) {
+                        count++;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return count;
+    }
+
+    private java.lang.reflect.Field findFieldInHierarchy(Class<?> clazz, String fieldName) {
+        Class<?> current = clazz;
+        while (current != null && current != Object.class) {
+            try {
+                return current.getDeclaredField(fieldName);
+            } catch (NoSuchFieldException e) {
+                current = current.getSuperclass();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get the ID attribute name using JPA Metamodel.
+     * Returns the name of the @Id field for the entity.
+     */
+    @SuppressWarnings("unchecked")
+    private String getEntityIdAttributeName() {
+        EntityType<T> entityType = entityManager.getMetamodel().entity(entityClass);
+        // Get the ID attribute - handles both simple and composite IDs
+        if (entityType.hasSingleIdAttribute()) {
+            SingularAttribute<? super T, ?> idAttribute = entityType.getId(entityType.getIdType().getJavaType());
+            return idAttribute.getName();
+        } else {
+            // For composite IDs, we'll use the entity itself for IN clause
+            // This is a fallback - most entities have single ID
+            throw new UnsupportedOperationException(
+                "Two-phase query optimization is not supported for entities with composite IDs. " +
+                "Consider removing pagination when using collection fetch joins for entity: " + entityClass.getName());
+        }
+    }
+
+    /**
+     * Build query using two-phase approach to avoid HHH90003004 warning.
+     * Phase 1: Get IDs with pagination (no collection fetch)
+     * Phase 2: Fetch entities with collections using IDs
+     */
+    private List<T> buildQueryWithTwoPhase() {
+        int collectionFetchCount = countCollectionFetches();
+        if (collectionFetchCount > 1) {
+            log.warn("Multiple collection fetch joins detected ({}). This may cause cartesian product " +
+                    "and performance issues. Consider using separate queries or @BatchSize annotation.", 
+                    collectionFetchCount);
+        }
+        
+        String idAttributeName = getEntityIdAttributeName();
+        
+        // Phase 1: Get IDs with pagination (without collection fetch joins)
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        Root<T> idRoot;
+        List<Object> ids;
+        
+        if (orders.isEmpty()) {
+            // No ORDER BY - simple ID query with DISTINCT
+            CriteriaQuery<Object> idQuery = cb.createQuery(Object.class);
+            idRoot = idQuery.from(entityClass);
+            
+            CriteriaContext idCtx = new CriteriaContext(cb, idRoot, idQuery);
+            CriteriaExpressionVisitor idVisitor = new CriteriaExpressionVisitor();
+            
+            applyJoinsForIdQuery(idCtx, idRoot);
+            idQuery.select(idRoot.get(idAttributeName)).distinct(true);
+            applyWhereClause(idCtx, idVisitor, idQuery);
+            
+            TypedQuery<Object> idTypedQuery = entityManager.createQuery(idQuery);
+            applyPagination(idTypedQuery);
+            ids = idTypedQuery.getResultList();
+        } else {
+            // With ORDER BY - must include order columns in SELECT for DISTINCT to work
+            // Use Tuple query to select ID + order columns, then extract IDs
+            CriteriaQuery<Tuple> tupleQuery = cb.createTupleQuery();
+            idRoot = tupleQuery.from(entityClass);
+            
+            CriteriaContext idCtx = new CriteriaContext(cb, idRoot, tupleQuery);
+            CriteriaExpressionVisitor idVisitor = new CriteriaExpressionVisitor();
+            
+            applyJoinsForIdQuery(idCtx, idRoot);
+            
+            List<Selection<?>> selections = new ArrayList<>();
+            selections.add(idRoot.get(idAttributeName));
+            for (OrderSpecifier orderSpec : orders) {
+                selections.add(idVisitor.compile(orderSpec.target(), idCtx));
+            }
+            tupleQuery.multiselect(selections).distinct(true);
+            
+            applyWhereClause(idCtx, idVisitor, tupleQuery);
+            applyOrderBy(idCtx, idVisitor, tupleQuery, cb);
+            
+            TypedQuery<Tuple> tupleTypedQuery = entityManager.createQuery(tupleQuery);
+            applyPagination(tupleTypedQuery);
+            
+            // Extract just the IDs from tuples
+            List<Tuple> tuples = tupleTypedQuery.getResultList();
+            ids = new ArrayList<>(tuples.size());
+            for (Tuple tuple : tuples) {
+                ids.add(tuple.get(0));
+            }
+        }
+        
+        if (ids.isEmpty()) {
+            return Collections.emptyList();
+        }
+        
+        // Phase 2: Fetch entities with collections using IDs (no pagination)
+        CriteriaQuery<T> entityQuery = cb.createQuery(entityClass);
+        Root<T> entityRoot = entityQuery.from(entityClass);
+        
+        CriteriaContext entityCtx = new CriteriaContext(cb, entityRoot, entityQuery);
+        CriteriaExpressionVisitor entityVisitor = new CriteriaExpressionVisitor();
+        
+        // Apply all joins including fetch joins
+        applyJoins(entityCtx, entityRoot);
+        
+        entityQuery.select(entityRoot);
+        // Always use distinct when fetching collections to avoid duplicates
+        entityQuery.distinct(true);
+        
+        // WHERE id IN (:ids)
+        entityQuery.where(entityRoot.get(idAttributeName).in(ids));
+        
+        // Apply ORDER BY to maintain consistent ordering
+        applyOrderBy(entityCtx, entityVisitor, entityQuery, cb);
+        
+        // No pagination here - we already got the right IDs
+        List<T> results = entityManager.createQuery(entityQuery).getResultList();
+        
+        // Re-order results to match the order from Phase 1
+        // This is necessary because IN clause doesn't preserve order
+        Map<Object, T> resultMap = new LinkedHashMap<>();
+        for (T entity : results) {
+            try {
+                java.lang.reflect.Field idField = findIdField(entityClass, idAttributeName);
+                idField.setAccessible(true);
+                Object idValue = idField.get(entity);
+                resultMap.put(idValue, entity);
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException("Failed to access ID field: " + idAttributeName, e);
+            }
+        }
+        
+        // Return results in the original order from Phase 1
+        List<T> orderedResults = new ArrayList<>(ids.size());
+        for (Object id : ids) {
+            T entity = resultMap.get(id);
+            if (entity != null) {
+                orderedResults.add(entity);
+            }
+        }
+        
+        return orderedResults;
+    }
+    
+    /**
+     * Find the ID field in the entity class or its superclasses.
+     */
+    private java.lang.reflect.Field findIdField(Class<?> clazz, String fieldName) {
+        Class<?> current = clazz;
+        while (current != null && current != Object.class) {
+            try {
+                return current.getDeclaredField(fieldName);
+            } catch (NoSuchFieldException e) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new RuntimeException("ID field not found: " + fieldName + " in " + clazz.getName());
+    }
+    
+    /**
+     * Apply joins for ID query - converts fetch joins to regular joins.
+     * Similar to applyJoinsForCount but used for the first phase of two-phase query.
+     */
+    private void applyJoinsForIdQuery(CriteriaContext ctx, Root<T> criteriaRoot) {
+        for (JoinSpec joinSpec : joins) {
+            // Convert all joins (including fetch) to regular joins for ID query
+            ctx.getOrCreateJoin(joinSpec.attribute(), joinSpec.type());
+        }
+    }
+
+    private boolean requiresTwoPhaseQuery() {
+        return hasCollectionFetch() && hasPagination();
+    }
+
     private TypedQuery<T> buildQuery() {
+        return buildQueryStandard();
+    }
+    
+    /**
+     * Standard query building without two-phase optimization.
+     */
+    private TypedQuery<T> buildQueryStandard() {
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<T> cq = cb.createQuery(entityClass);
         Root<T> criteriaRoot = cq.from(entityClass);
