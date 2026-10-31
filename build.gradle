@@ -2,14 +2,13 @@ import com.vanniktech.maven.publish.SonatypeHost
 
 plugins {
 	id 'java-library'
-	id 'org.springframework.boot' version '3.5.7'
 	id 'io.spring.dependency-management' version '1.1.7'
 	id "com.vanniktech.maven.publish" version "0.32.0"
 	id 'signing'
 }
 
 group = 'com.soyesenna'
-version = '0.1.7'
+version = '0.1.8'
 description = 'HelixQuery runtime + processor'
 
 java {
@@ -30,6 +29,14 @@ repositories {
 	mavenCentral()
 }
 
+// 라이브러리라 Spring Boot 플러그인을 쓰지 않는다. 플러그인이 있으면 bootJar 가 주 산출물이 되어 일반 jar 가
+// '-plain' 분류자로 밀려나고, Maven 이 기본 jar 를 찾지 못한다(0.1.7). 버전은 Boot BOM 으로만 맞춘다.
+dependencyManagement {
+	imports {
+		mavenBom "org.springframework.boot:spring-boot-dependencies:3.5.7"
+	}
+}
+
 tasks.withType(Javadoc) {
 	options {
 		encoding 'UTF-8'
@@ -40,7 +47,7 @@ mavenPublishing {
 	signAllPublications()
 	publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
 
-	coordinates("com.soyesenna", "helixquery", "0.1.7")
+	coordinates("com.soyesenna", "helixquery", "0.1.8")
 
 	pom {
 		name = 'helix-query'
