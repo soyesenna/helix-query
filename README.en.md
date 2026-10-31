@@ -4,104 +4,65 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Java](https://img.shields.io/badge/Java-21+-orange.svg)](https://www.oracle.com/java/)
 
-> **Type-safe JPA Query Builder** - Automatic metadata generation at compile-time via Annotation Processing
+> A type-safe JPA query builder that generates entity field constants at compile time and compiles its own expression tree to the JPA Criteria API
 
 English | [한국어](./README.md)
 
 ## Overview
 
-HelixQuery is a Spring library based on **JPA + Querydsl + Annotation Processing**, providing an innovative solution for writing type-safe dynamic queries.
+HelixQuery is a query builder library for Spring Boot and JPA. It works without Querydsl or any other query library, and without Q-type generation.
 
-### Key Features
+- **Generated field constants**: an annotation processor (`HelixQueryProcessor`) generates an `XxxFields` class for every `@Entity`. Depending on the field type it emits `StringField`, `NumberField`, `DateTimeField`, `ComparableField` (enums and other comparables), `CollectionField`, `RelationField` or `Field` constants.
+- **Own expression tree, compiled to the Criteria API**: conditions, ordering and joins collected by a `HelixQuery` chain are compiled to the JPA Criteria API by `CriteriaExpressionVisitor` at execution time.
+- **Relations and embedded fields**: `~ToOne` relations become nested classes (`UserFields.DEPARTMENT.NAME`) and `@Embedded` fields are flattened into constants (`UserFields.ADDRESS_CITY`). Filtering on a relation field adds a LEFT JOIN for that relation automatically.
+- **Collection fetch joins with pagination**: when a collection fetch join is combined with offset and limit, the query runs in two phases (page of IDs first, then an IN query) instead of paginating in memory. Count queries leave fetch joins out.
+- **Spring integration**: Spring Boot auto-configuration registers a `HelixQueryFactory` bean backed by the Spring-managed `EntityManager`, and a service extending `AbstractHelixService<T>` needs no constructor.
 
-- 🎯 **Compile-time Type Safety**: Automatically generates field metadata from `@Entity` classes
-- 🔗 **Fluent Query DSL**: Intuitive, chainable query API
-- 🔄 **Persistence Context Guarantee**: Full integration with Spring-managed EntityManager
-- ⚡ **Minimal Boilerplate**: No manual field definitions required
-- 🛡️ **Querydsl Compatible**: Perfect compatibility with existing Querydsl features
+### No Querydsl since 0.1.0
 
-### Why HelixQuery?
+The 0.0.x releases were built on Querydsl. Version 0.1.0 removed the Querydsl dependency and replaced it with an own expression tree compiled to the JPA Criteria API. The 0.0.x `AbstractQueryService`, `QueryChain` and `JPAQueryFactory` setup are gone; `AbstractHelixService`, `HelixQuery` and the auto-configured `HelixQueryFactory` take their place.
 
-```java
-// ❌ Traditional approach: String-based (runtime errors possible)
-List<Member> results = memberRepository.findByName("John Doe");
+## Installation
 
-// ✅ HelixQuery: Type-safe + Dynamic queries
-List<Member> results = memberService
-    .findBy(MemberFields.NAME, "John Doe")
-    .whereGreaterThan(MemberFields.AGE, 20)
-    .orderByDesc(MemberFields.CREATED_AT)
-    .limit(10)
-    .query();
-```
-
-## Quick Start
-
-### 1. Add Dependencies
-
-**Gradle (Kotlin DSL)**
-```kotlin
-dependencies {
-    implementation("com.soyesenna:helixquery:0.0.1")
-
-    // Querydsl dependencies
-    implementation("com.querydsl:querydsl-jpa:5.1.0:jakarta")
-    annotationProcessor("com.querydsl:querydsl-apt:5.1.0:jakarta")
-    annotationProcessor("jakarta.persistence:jakarta.persistence-api:3.1.0")
-}
-```
+The latest version on Maven Central is `com.soyesenna:helixquery:0.1.7`. The instructions assume a Spring Boot project (Spring Boot Gradle plugin with `io.spring.dependency-management`). The annotation processor ships in the same jar, so add the same coordinates to `annotationProcessor` as well, otherwise no `XxxFields` classes are generated.
 
 **Gradle (Groovy)**
 ```groovy
 dependencies {
-    implementation 'com.soyesenna:helixquery:0.0.1'
+    implementation 'com.soyesenna:helixquery:0.1.7'
+    annotationProcessor 'com.soyesenna:helixquery:0.1.7'
+}
+```
 
-    implementation 'com.querydsl:querydsl-jpa:5.1.0:jakarta'
-    annotationProcessor 'com.querydsl:querydsl-apt:5.1.0:jakarta'
-    annotationProcessor 'jakarta.persistence:jakarta.persistence-api:3.1.0'
+**Gradle (Kotlin DSL)**
+```kotlin
+dependencies {
+    implementation("com.soyesenna:helixquery:0.1.7")
+    annotationProcessor("com.soyesenna:helixquery:0.1.7")
 }
 ```
 
 **Maven**
+
+For 0.1.7 the jar is published on Maven Central as `helixquery-0.1.7-plain.jar`, so Maven needs the `plain` classifier. Gradle finds this jar through the published Gradle module metadata and needs no classifier.
+
 ```xml
-<dependencies>
-    <dependency>
-        <groupId>com.soyesenna</groupId>
-        <artifactId>helixquery</artifactId>
-        <version>0.0.1</version>
-    </dependency>
-
-    <dependency>
-        <groupId>com.querydsl</groupId>
-        <artifactId>querydsl-jpa</artifactId>
-        <version>5.1.0</version>
-        <classifier>jakarta</classifier>
-    </dependency>
-</dependencies>
+<dependency>
+    <groupId>com.soyesenna</groupId>
+    <artifactId>helixquery</artifactId>
+    <version>0.1.7</version>
+    <classifier>plain</classifier>
+</dependency>
 ```
 
-### 2. Configure Querydsl
+If your project configures `annotationProcessorPaths` on `maven-compiler-plugin`, add the same coordinates (including the `plain` classifier) there too.
 
-```java
-@Configuration
-@EnableTransactionManagement
-public class QuerydslConfig {
+## Quick Start
 
-    @PersistenceContext
-    private EntityManager em;
-
-    @Bean
-    public JPAQueryFactory jpaQueryFactory() {
-        return new JPAQueryFactory(em);
-    }
-}
-```
-
-### 3. Define Entity
+### 1. Define an entity
 
 ```java
 @Entity
-@Table(name = "members")
 public class Member {
 
     @Id
@@ -109,357 +70,249 @@ public class Member {
     private Long id;
 
     private String name;
-    private String email;
     private Integer age;
+
+    @Enumerated(EnumType.STRING)
+    private MemberStatus status;
+
     private LocalDateTime createdAt;
 
-    // getters, setters, constructors...
+    @ManyToOne(fetch = FetchType.LAZY)
+    private Team team;
+
+    @OneToMany(mappedBy = "member")
+    private List<Order> orders = new ArrayList<>();
+
+    @Embedded
+    private Address address;   // city, street ...
 }
 ```
 
-During build, `MemberFields` class is automatically generated:
+### 2. The generated `MemberFields`
+
+Compilation generates a class like this in the same package (abridged).
 
 ```java
 public final class MemberFields {
 
-    public static final Field<String, QMember> NAME =
-        new Field<>("name", String.class, m -> m.name);
+    public static final NumberField<Long> ID = new NumberField<>("id", Long.class, Member.class);
+    public static final StringField NAME = new StringField("name", Member.class);
+    public static final NumberField<Integer> AGE = new NumberField<>("age", Integer.class, Member.class);
+    public static final ComparableField<MemberStatus> STATUS = ...;
+    public static final DateTimeField<LocalDateTime> CREATED_AT = ...;
+    public static final CollectionField<Order> ORDERS = ...;
 
-    public static final Field<String, QMember> EMAIL =
-        new Field<>("email", String.class, m -> m.email);
+    // @Embedded fields are flattened
+    public static final StringField ADDRESS_CITY = ...;
 
-    public static final Field<Integer, QMember> AGE =
-        new Field<>("age", Integer.class, m -> m.age);
-
-    public static final Field<LocalDateTime, QMember> CREATED_AT =
-        new Field<>("createdAt", LocalDateTime.class, m -> m.createdAt);
+    // ~ToOne relations become nested classes
+    public static final class TEAM {
+        public static final RelationField<Team> $ = ...;   // relation field used for joins
+        public static final StringField NAME = ...;        // team.name, adds a LEFT JOIN when used in a condition
+    }
 }
 ```
 
-### 4. Implement Service
+### 3. Write a service
 
 ```java
 @Service
-public class MemberService extends AbstractQueryService<Member, QMember> {
+@Transactional(readOnly = true)
+public class MemberService extends AbstractHelixService<Member> {
+    // No constructor needed: Spring injects HelixQueryFactory and EntityManager,
+    // and the entity type is resolved from the generic argument.
 
-    public MemberService(JPAQueryFactory queryFactory) {
-        super(queryFactory, QMember.member);
-    }
-
-    @Transactional
-    public Member create(String name, String email, int age) {
-        Member member = new Member(name, email, age);
-        return persist(member);
-    }
-
-    @Transactional(readOnly = true)
-    public List<Member> searchMembers(String name, Integer minAge, Integer maxAge) {
+    public List<Member> search(String name, Integer minAge) {
         return find()
-            .when(name != null,
-                  q -> q.whereLike(MemberFields.NAME, "%" + name + "%"))
-            .when(minAge != null,
-                  q -> q.whereGreaterThan(MemberFields.AGE, minAge))
-            .when(maxAge != null,
-                  q -> q.whereLessThan(MemberFields.AGE, maxAge))
+            .when(name != null, q -> q.whereContains(MemberFields.NAME, name))
+            .when(minAge != null, q -> q.whereGreaterThanOrEqual(MemberFields.AGE, minAge))
+            .whereEqual(MemberFields.TEAM.NAME, "Platform")
             .orderByDesc(MemberFields.CREATED_AT)
-            .query();
-    }
-
-    @Transactional(readOnly = true)
-    public List<Member> findTop10ByNameOrderByAge(String name) {
-        return findBy(MemberFields.NAME, name)
-            .orderByAsc(MemberFields.AGE)
             .limit(10)
             .query();
     }
+
+    public List<Member> findAllByIds(List<Long> ids) {
+        return findBy(MemberFields.ID, ids).query();   // IN query, empty list gives an empty result
+    }
 }
 ```
 
-## Core Features
+`AbstractHelixService` provides query entry points such as `find()`, `findBy(...)` and `where(...)`, and persistence methods such as `save`, `persist`, `merge`, `remove` and `findById`.
 
-### 1. Type-safe Query Conditions
+## Features
+
+### Conditions
 
 ```java
-// Equality
-.whereEqual(MemberFields.NAME, "John Doe")
-
-// Comparison
+.whereEqual(MemberFields.STATUS, MemberStatus.ACTIVE)
 .whereGreaterThan(MemberFields.AGE, 20)
-.whereLessThan(MemberFields.AGE, 60)
+.whereLessThanOrEqual(MemberFields.CREATED_AT, LocalDateTime.now())
+.whereLike(MemberFields.NAME, "Kim%")
+.whereContains(MemberFields.NAME, "jin")
+.whereIn(MemberFields.STATUS, List.of(MemberStatus.ACTIVE, MemberStatus.PENDING))
+.whereIsNull(MemberFields.AGE)
+.whereBeforeNow(MemberFields.CREATED_AT)
 
-// String pattern matching
-.whereLike(MemberFields.EMAIL, "%@example.com")
-
-// IN clause
-.whereIn(MemberFields.STATUS, List.of(Status.ACTIVE, Status.PENDING))
-
-// Custom condition (direct Querydsl Predicate)
-.where(MemberFields.AGE.path(root).between(20, 30))
+// OR conditions and groups
+.orEqual(MemberFields.STATUS, MemberStatus.PENDING)
+.whereAnyOf(predicateA, predicateB)
+.whereGroup(g -> g.and(predicateA).or(predicateB))
 ```
 
-### 2. Ordering and Pagination
+Field constants can also build predicates (`PredicateExpression`) directly.
 
 ```java
-// Ordering
+HelixQuery<Member> q = memberService.find();
+q.where(MemberFields.AGE.between(q.root(), 20, 30))
+ .and(MemberFields.NAME.startsWith(q.root(), "Kim"))
+ .and(MemberFields.ORDERS.isNotEmpty(q.root()));
+```
+
+### Ordering and paging
+
+```java
 .orderByAsc(MemberFields.NAME)
 .orderByDesc(MemberFields.CREATED_AT)
+.offset(20).limit(10)
 
-// Pagination
-.offset(20)
-.limit(10)
-
-// Spring Data Pageable integration
-.pageable(pageable, this::resolveField)
-
-private Field<?, QMember> resolveField(String property) {
-    return switch (property) {
-        case "name" -> MemberFields.NAME;
-        case "age" -> MemberFields.AGE;
-        default -> null;
-    };
-}
+// Spring Data Page
+Page<Member> page = memberService.find()
+    .whereEqual(MemberFields.STATUS, MemberStatus.ACTIVE)
+    .queryPageOrderByDesc(pageable, MemberFields.CREATED_AT);
 ```
 
-### 3. Join Queries
+### Joins
 
 ```java
-// Inner join
-.join(QTeam.team, QTeam.team.id.eq(root().team.id))
-
-// Left join
-.leftJoin(QTeam.team, QTeam.team.id.eq(root().team.id))
-
-// Fetch join (N+1 problem solver)
-.fetchJoin(QTeam.team, QTeam.team.id.eq(root().team.id))
-
-// RelationField-based join
-.joinRelation(MemberFields.TEAM, QTeam.team, QTeam.team.active.isTrue())
+.join(MemberFields.TEAM.$)
+.leftJoin(MemberFields.TEAM.$)
+.fetchJoin(MemberFields.TEAM.$)
+.leftFetchJoin(MemberFields.TEAM.$)
+.leftFetchJoin(MemberFields.ORDERS)          // collection fetch join
+.leftFetchJoinDistinct(MemberFields.ORDERS)  // collection fetch join + DISTINCT
 ```
 
-### 4. Dynamic Query Builder
+### Collection fetch joins with pagination
+
+When a collection fetch join is combined with offset and limit, Hibernate loads the whole result into memory and slices it there (warning HHH90003004). HelixQuery detects this combination and runs the query in two phases.
+
+1. Without fetch joins, apply the conditions, ordering and paging, and select only the IDs of the page.
+2. Load the entities with `id IN (...)`, fetch-joining the collections, and restore the order from phase 1.
 
 ```java
-public List<Member> dynamicSearch(SearchCriteria criteria) {
-    return find()
-        .when(criteria.getName() != null,
-              q -> q.whereLike(MemberFields.NAME, "%" + criteria.getName() + "%"))
-        .when(criteria.getMinAge() != null,
-              q -> q.whereGreaterThan(MemberFields.AGE, criteria.getMinAge()))
-        .when(criteria.getMaxAge() != null,
-              q -> q.whereLessThan(MemberFields.AGE, criteria.getMaxAge()))
-        .when(criteria.getEmail() != null,
-              q -> q.whereEqual(MemberFields.EMAIL, criteria.getEmail()))
-        .orderByDesc(MemberFields.CREATED_AT)
-        .query();
-}
+Page<Member> page = memberService.find()
+    .leftFetchJoin(MemberFields.ORDERS)
+    .whereEqual(MemberFields.STATUS, MemberStatus.ACTIVE)
+    .queryPageOrderByDesc(PageRequest.of(0, 20), MemberFields.CREATED_AT);
 ```
 
-### 5. Aggregation and Grouping
+Count queries (`queryCount` and the total of `queryPage`) are built without fetch joins and use `count(distinct)` when a collection fetch is present. The two-phase query is not supported for entities with composite IDs. When the two-phase query sees two or more collection fetch joins, it logs a cartesian product warning.
+
+### Execution
 
 ```java
-// Count query
-long count = find()
-    .whereGreaterThan(MemberFields.AGE, 20)
-    .queryCount();
+List<Member> list = query.query();
+Optional<Member> one = query.queryOne();
+Member first = query.queryFirstOrNull();
+long count = query.queryCount();
+boolean exists = query.exists();
 
-// Existence check
-boolean exists = find()
-    .whereEqual(MemberFields.EMAIL, "test@example.com")
-    .exists();
-
-// Group By
-.groupBy(MemberFields.AGE.path(root()))
-.having(MemberFields.AGE.path(root()).count().gt(10))
-
-// Projection (select specific fields)
-List<String> names = find()
-    .queryAs(q -> q.name);
+// Delete: throws without WHERE conditions (use deleteAll for everything)
+long deleted = query.delete();      // delete through the persistence context (lifecycle callbacks, cascades)
+long bulk = query.deleteBulk();     // CriteriaDelete bulk delete (bypasses the persistence context)
 ```
 
-### 6. Persistence Context Usage
+### Projections and aggregation
 
 ```java
-@Transactional
-public Member updateMember(Long id, String newName) {
-    // 1. Query (loaded into persistence context)
-    Member member = findBy(MemberFields.ID, id)
-        .queryOneOrNull();
+HelixQuery<Member> q = memberService.find()
+    .whereEqual(MemberFields.STATUS, MemberStatus.ACTIVE);
 
-    if (member == null) {
-        throw new EntityNotFoundException();
-    }
+List<MemberDto> dtos = q.queryAs(Projections.constructor(MemberDto.class,
+    MemberFields.NAME.path(q.root()),
+    MemberFields.AGE.path(q.root())));
 
-    // 2. Modify (Dirty Checking automatically applied)
-    member.setName(newName);
+List<String> names = q.querySelect(MemberFields.NAME.path(q.root()));
 
-    // 3. Automatic UPDATE on transaction commit without flush()
-    return member;
-}
+Map<MemberStatus, Long> countByStatus = memberService.find().groupByCount(MemberFields.STATUS);
 ```
 
-## Advanced Features
-
-### Annotation Options
-
-#### @GenerateFields
-
-Control Fields class generation for specific entities:
+## Annotations and processor options
 
 ```java
 @Entity
-@GenerateFields(false)  // Skip Fields class generation
-public class InternalEntity {
-    // ...
-}
-```
+@GenerateFields(false)   // no Fields class for this entity
+public class InternalEntity { ... }
 
-#### @IgnoreField
-
-Exclude specific fields from Fields class:
-
-```java
 @Entity
 public class User {
-
-    @Id
-    private Long id;
-
-    private String username;
-
-    @IgnoreField  // Will not be generated in UserFields
-    @JsonIgnore
+    @IgnoreField          // left out of UserFields
     private String password;
 }
 ```
 
-### Processor Options
+Putting `@GenerateFields` on a class that is not an `@Entity` generates a Fields class for it as well.
 
-Configure Annotation Processor options in `build.gradle`:
+| Option | Default | Description |
+| --- | --- | --- |
+| `HelixQuery.generateRelations` | `true` | Generate relation fields (`RelationField`, nested classes) |
+| `HelixQuery.includeTransient` | `false` | Include `@Transient` fields |
+| `HelixQuery.relationDepth` | `1` | How many levels of nested relation classes to generate |
 
-```gradle
-tasks.withType(JavaCompile) {
-    options.compilerArgs += [
-        '-AHelixQuery.generateRelations=true',    // Generate RelationField (default: true)
-        '-AHelixQuery.includeTransient=false'     // Include @Transient fields (default: false)
-    ]
+```groovy
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ['-AHelixQuery.relationDepth=2']
 }
 ```
 
-### Collection Field Support
-
-```java
-@Entity
-public class Team {
-
-    @Id
-    private Long id;
-
-    @OneToMany(mappedBy = "team")
-    private List<Member> members;
-}
-```
-
-Generated `TeamFields`:
-
-```java
-public final class TeamFields {
-
-    public static final CollectionField<Member, QTeam,
-        CollectionExpressionBase<?, Member>> MEMBERS =
-            new CollectionField<>("members", Member.class, t -> t.members);
-}
-```
-
-### Leveraging Advanced Querydsl Features
-
-Access the original JPAQuery via QueryChain's `unwrap()` method:
-
-```java
-JPAQuery<Member> query = find()
-    .whereGreaterThan(MemberFields.AGE, 20)
-    .unwrap();
-
-// Use all Querydsl features
-query.select(Projections.constructor(
-    MemberDTO.class,
-    QMember.member.name,
-    QMember.member.email
-));
-```
-
-## Project Structure
+## Project structure
 
 ```
-helixquery/
-├── src/main/java/com/soyesenna/helixquery/
-│   ├── Field.java                     # Field metadata type
-│   ├── CollectionField.java           # Collection field type
-│   ├── RelationField.java             # Relation field type
-│   ├── AbstractQueryService.java      # Service base class
-│   ├── QueryChain.java                # Fluent query builder
-│   ├── annotations/
-│   │   ├── GenerateFields.java        # Fields generation control annotation
-│   │   └── IgnoreField.java           # Field exclusion annotation
-│   ├── processor/
-│   │   └── HelixQueryProcessor.java   # Annotation Processor implementation
-│   └── autoconfigure/
-│       └── HelixQueryAutoConfiguration.java  # Spring Boot auto-configuration
-└── src/main/resources/
-    └── META-INF/
-        ├── services/
-        │   └── javax.annotation.processing.Processor
-        └── spring/
-            └── org.springframework.boot.autoconfigure.AutoConfiguration.imports
+src/main/java/com/soyesenna/helixquery/
+├── HelixQuery.java                 # fluent query builder, executed through the Criteria API
+├── HelixQueryFactory.java          # creates HelixQuery instances
+├── AbstractHelixService.java       # service base class
+├── expression/                     # own expression tree and CriteriaExpressionVisitor
+├── field/                          # Field, StringField, NumberField, DateTimeField, ComparableField, CollectionField, RelationField
+├── predicate/PredicateBuilder.java # predicate groups
+├── order/                          # ordering
+├── projection/                     # Projections, TupleResult
+├── annotations/                    # @GenerateFields, @IgnoreField
+├── processor/HelixQueryProcessor.java        # annotation processor
+└── autoconfigure/HelixQueryAutoConfiguration.java  # Spring Boot auto-configuration
 ```
 
 ## Requirements
 
-- **Java**: 21+
-- **Spring Boot**: 3.x
-- **Jakarta Persistence API**: 3.x
-- **Querydsl**: 5.1.0+
+- Java 21 or later
+- Spring Boot 3 with Spring Data JPA (`jakarta.persistence`)
+- The library is built against the Spring Boot 3.5.7 BOM and verified with integration tests on H2.
 
-## License
-
-This project is licensed under the [Apache License 2.0](LICENSE).
-
-## Contributing
-
-Contributions are always welcome! Please feel free to open issues or submit Pull Requests.
-
-### Development Setup
+## Development
 
 ```bash
-# Clone repository
 git clone https://github.com/soyesenna/helix-query.git
 cd helix-query
-
-# Build
 ./gradlew build
-
-# Test
 ./gradlew test
 ```
 
-## Contact & Support
+## Changelog
+
+- **0.1.7**: two-phase query for collection fetch joins combined with pagination, `count(distinct)` when a collection fetch is present
+- **0.1.1 to 0.1.5**: nested fields for `~ToOne` relations, flattened `@Embedded` fields, paging helpers, fetch joins excluded from count queries, null and OR condition helpers, groupBy helpers, collection IN `findBy`, fix for duplicate joins when fetch joins meet ORDER BY
+- **0.1.0**: Querydsl dependency removed, reimplemented on an own expression tree compiled to the JPA Criteria API
+- **0.0.x**: initial Querydsl-based releases
+
+See the [commit history](https://github.com/soyesenna/helix-query/commits/main) for details.
+
+## License
+
+[Apache License 2.0](LICENSE)
+
+## Contact
 
 - **Author**: Jooyoung Kim (soyesenna)
 - **Email**: kjy915875@gmail.com
-- **GitHub**: [https://github.com/soyesenna/helix-query](https://github.com/soyesenna/helix-query)
 - **Issues**: [https://github.com/soyesenna/helix-query/issues](https://github.com/soyesenna/helix-query/issues)
-
-## Changelog
-
-### 0.0.1 (2025-01-24)
-- 🎉 Initial release
-- ✨ Core features implementation
-  - Field, CollectionField, RelationField
-  - AbstractQueryService
-  - QueryChain fluent API
-  - HelixQueryProcessor
-- 🔧 Spring Boot 3.x support
-- 📝 Complete documentation
-
----
-
-**⭐ If you find this project useful, please give it a Star on GitHub!**
